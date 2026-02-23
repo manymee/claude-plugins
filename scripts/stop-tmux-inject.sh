@@ -53,15 +53,17 @@ fi
 
 log "Handoff has continue=true and stop_hook_active=true — triggering tmux injection"
 
-# Verify we're in tmux
-if [[ -z "${TMUX:-}" ]]; then
-  log "ERROR: Not running inside tmux — cannot inject commands"
+# Verify we're in tmux and have a pane target.
+# $TMUX_PANE is set per-pane by tmux and inherited by child processes,
+# making it more reliable than `tmux display-message` which depends on
+# client context and may fail in iTerm2 tmux integration mode (-CC).
+if [[ -z "${TMUX:-}" || -z "${TMUX_PANE:-}" ]]; then
+  log "ERROR: Not running inside tmux (TMUX=${TMUX:-<unset>}, TMUX_PANE=${TMUX_PANE:-<unset>}) — cannot inject commands"
   exit 0
 fi
 
-# Get the current tmux pane
-current_pane=$(tmux display-message -p '#{pane_id}')
-log "Current tmux pane: $current_pane"
+current_pane="$TMUX_PANE"
+log "Current tmux pane: $current_pane (from \$TMUX_PANE)"
 
 # Background the tmux injection so we don't block the hook return.
 # Delays give Claude time to fully stop and release the terminal.
