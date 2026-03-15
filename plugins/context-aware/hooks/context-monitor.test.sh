@@ -18,6 +18,9 @@ TEMP_DIR=$(mktemp -d)
 TEMP_TRANSCRIPT="$TEMP_DIR/transcript.jsonl"
 trap "rm -rf $TEMP_DIR" EXIT
 
+# Isolate tests from user's personal config (~/.claude/context-aware.json)
+export HOME="$TEMP_DIR"
+
 run_test() {
   local name="$1"
   local input="$2"
@@ -199,7 +202,7 @@ EOF
 run_test "custom message with {percent} interpolation" \
   '{"stop_hook_active": false, "transcript_path": "'"$TEMP_TRANSCRIPT"'"}' \
   0 \
-  "Usage is 0% of context" \
+  "Usage is 1% of context" \
   "CONTEXT_AWARE_CONFIG=$INTERP_CONFIG"
 
 # Test: Custom context_size makes low tokens appear as high percentage
@@ -218,6 +221,54 @@ run_test "custom context_size changes percentage calculation" \
   0 \
   "Over half at 80%" \
   "CONTEXT_AWARE_CONFIG=$SMALL_CTX_CONFIG"
+
+# --- 1M context model tests ---
+
+# Test: claude-opus-4-6 model auto-detects 1M context (100k tokens = 10%, below 40% threshold)
+cat > "$TEMP_TRANSCRIPT" << 'EOF'
+{"type":"assistant","message":{"model":"claude-opus-4-6","usage":{"input_tokens":50000,"cache_creation_input_tokens":30000,"cache_read_input_tokens":20000}}}
+EOF
+
+run_test "1M model: 100k tokens (10%) does not block" \
+  '{"stop_hook_active": false, "transcript_path": "'"$TEMP_TRANSCRIPT"'"}' \
+  0 \
+  ""
+
+# Test: claude-opus-4-6 at 50% of 1M (500k tokens) should block
+cat > "$TEMP_TRANSCRIPT" << 'EOF'
+{"type":"assistant","message":{"model":"claude-opus-4-6","usage":{"input_tokens":250000,"cache_creation_input_tokens":150000,"cache_read_input_tokens":100000}}}
+EOF
+
+run_test "1M model: 500k tokens (50%) blocks with handoff recommended" \
+  '{"stop_hook_active": false, "transcript_path": "'"$TEMP_TRANSCRIPT"'"}' \
+  0 \
+  "Handoff recommended"
+
+# Test: config context_size override takes precedence over model auto-detection
+cat > "$TEMP_TRANSCRIPT" << 'EOF'
+{"type":"assistant","message":{"model":"claude-opus-4-6","usage":{"input_tokens":50000,"cache_creation_input_tokens":30000,"cache_read_input_tokens":20000}}}
+EOF
+
+OVERRIDE_CONFIG="$TEMP_DIR/override-ctx-config.json"
+cat > "$OVERRIDE_CONFIG" << 'EOF'
+{
+  "context_size": 200000,
+  "thresholds": [
+    { "percent": 40, "message": "Override at {percent}%." }
+  ]
+}
+EOF
+
+run_test "config context_size overrides 1M auto-detection" \
+  '{"stop_hook_active": false, "transcript_path": "'"$TEMP_TRANSCRIPT"'"}' \
+  0 \
+  "Override at 50%" \
+  "CONTEXT_AWARE_CONFIG=$OVERRIDE_CONFIG"
+
+# Restore low-usage transcript for remaining tests
+cat > "$TEMP_TRANSCRIPT" << 'EOF'
+{"type":"assistant","message":{"model":"claude-opus-4-5-20251101","usage":{"input_tokens":100,"cache_creation_input_tokens":500,"cache_read_input_tokens":1000}}}
+EOF
 
 # Test: Debug mode via config includes systemMessage
 DEBUG_CONFIG="$TEMP_DIR/debug-config.json"

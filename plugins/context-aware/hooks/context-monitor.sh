@@ -77,16 +77,22 @@ get_transcript_path() {
 
 get_context_size_for_model() {
   local model="$1"
-  local default_size
-  default_size=$(echo "$CONFIG_JSON" | jq '.context_size // 200000')
+  local config_size
+  config_size=$(echo "$CONFIG_JSON" | jq -r '.context_size // empty')
 
-  # All current Claude models have 200K context
+  # Explicit config override takes precedence
+  if [[ -n "$config_size" ]]; then
+    echo "$config_size"
+    return
+  fi
+
+  # Auto-detect from model ID
   case "$model" in
-    claude-opus-4-5*|claude-3-5*|claude-3-opus*|claude-3-sonnet*|claude-3-haiku*)
-      echo "$default_size"
+    claude-opus-4-6*)
+      echo 1000000
       ;;
     *)
-      echo "$default_size"
+      echo 200000
       ;;
   esac
 }
@@ -183,7 +189,7 @@ main() {
   local token_count
   token_count=$(get_token_count "$transcript_path")
 
-  local percentage=$((token_count * 100 / context_size))
+  local percentage=$(( (token_count * 100 + context_size / 2) / context_size ))
 
   local reason
   if ! reason=$(get_reason "$percentage"); then
