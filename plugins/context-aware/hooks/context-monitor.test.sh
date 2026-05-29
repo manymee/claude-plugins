@@ -254,6 +254,16 @@ run_test "1M model (opus-4-7): 100k tokens (10%) does not block" \
   0 \
   ""
 
+# Test: claude-opus-4-8 also auto-detects 1M context
+cat > "$TEMP_TRANSCRIPT" << 'EOF'
+{"type":"assistant","message":{"model":"claude-opus-4-8","usage":{"input_tokens":50000,"cache_creation_input_tokens":30000,"cache_read_input_tokens":20000}}}
+EOF
+
+run_test "1M model (opus-4-8): 100k tokens (10%) does not block" \
+  '{"stop_hook_active": false, "transcript_path": "'"$TEMP_TRANSCRIPT"'"}' \
+  0 \
+  ""
+
 # Test: config context_size override takes precedence over model auto-detection
 cat > "$TEMP_TRANSCRIPT" << 'EOF'
 {"type":"assistant","message":{"model":"claude-opus-4-6","usage":{"input_tokens":50000,"cache_creation_input_tokens":30000,"cache_read_input_tokens":20000}}}
