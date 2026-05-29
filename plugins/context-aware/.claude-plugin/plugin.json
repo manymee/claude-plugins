@@ -1,7 +1,7 @@
 {
   "name": "context-aware",
   "description": "Monitor context window usage and get recommendations for handoffs before exhaustion",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "author": {
     "name": "manymee"
   },
