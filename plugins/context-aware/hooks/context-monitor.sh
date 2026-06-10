@@ -88,7 +88,7 @@ get_context_size_for_model() {
 
   # Auto-detect from model ID
   case "$model" in
-    claude-opus-4-6*|claude-opus-4-7*|claude-opus-4-8*)
+    claude-opus-4-6*|claude-opus-4-7*|claude-opus-4-8*|claude-fable-5*)
       echo 1000000
       ;;
     *)
