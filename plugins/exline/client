@@ -1,0 +1,7 @@
+#!/bin/sh
+
+{
+  jq --arg c "${COLUMNS:-0}" --arg l "${LINES:-0}" \
+     '. + {terminal: {columns: ($c|tonumber), lines: ($l|tonumber)}}'
+  printf '\0'
+} | nc -U /tmp/exline.sock

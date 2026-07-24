@@ -1,0 +1,4 @@
+ .../exline-test-cwd/dotfiles 
+ no git 
+ v2.1.140  Opus 4.7  concise-omit  Ctx Used: 6.0%  |  25.1G/64.0G 
+ Session: 3.0%  3h14m  |  Weekly: 29.0%  14h34m 

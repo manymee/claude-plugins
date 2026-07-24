@@ -1,0 +1,31 @@
+{
+  "_test_now": 1779108142,
+  "context_window": {
+    "remaining_percentage": 94,
+    "used_percentage": 6
+  },
+  "cwd": "/tmp/exline-test-cwd/dotfiles",
+  "model": {
+    "display_name": "Opus 4.7",
+    "id": "claude-opus-4-7"
+  },
+  "output_style": {
+    "name": "concise-omit"
+  },
+  "rate_limits": {
+    "five_hour": {
+      "resets_at": 1779119842,
+      "used_percentage": 3
+    },
+    "seven_day": {
+      "resets_at": 1779160642,
+      "used_percentage": 29
+    }
+  },
+  "session_id": "fixture-with-rate-limits",
+  "version": "2.1.140",
+  "workspace": {
+    "current_dir": "/tmp/exline-test-cwd/dotfiles",
+    "project_dir": "/tmp/exline-test-cwd/dotfiles"
+  }
+}

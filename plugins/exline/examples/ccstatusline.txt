@@ -1,0 +1,4 @@
+.../code/zora 
+zora  𖠰 main  ⎇ main
+v2.1.138  Opus 4.7  concise-omit  Ctx Used: 40.0%  |  26.1G/64.0G
+Session: 3.0%  3h15m  |  Weekly: 29.0%  14h35m

@@ -1,0 +1,47 @@
+{
+  "session_id": "7696f3ce-7204-49ed-b729-24632db78f0c",
+  "transcript_path": "/Users/manymee/.claude/projects/-Users-manymee-my-dotfiles/7696f3ce-7204-49ed-b729-24632db78f0c.jsonl",
+  "cwd": "/Users/manymee/my/dotfiles",
+  "effort": {
+    "level": "xhigh"
+  },
+  "session_name": "Explore Elixir CLI libraries and frameworks",
+  "model": {
+    "id": "claude-opus-4-7",
+    "display_name": "Opus 4.7"
+  },
+  "workspace": {
+    "current_dir": "/Users/manymee/my/dotfiles",
+    "project_dir": "/Users/manymee/my/dotfiles",
+    "added_dirs": []
+  },
+  "version": "2.1.140",
+  "output_style": {
+    "name": "concise-omit"
+  },
+  "cost": {
+    "total_cost_usd": 2.970207000000001,
+    "total_duration_ms": 8162344,
+    "total_api_duration_ms": 454530,
+    "total_lines_added": 2,
+    "total_lines_removed": 2
+  },
+  "context_window": {
+    "total_input_tokens": 56809,
+    "total_output_tokens": 865,
+    "context_window_size": 1000000,
+    "current_usage": {
+      "input_tokens": 6,
+      "output_tokens": 865,
+      "cache_creation_input_tokens": 39300,
+      "cache_read_input_tokens": 17503
+    },
+    "used_percentage": 6,
+    "remaining_percentage": 94
+  },
+  "exceeds_200k_tokens": false,
+  "fast_mode": false,
+  "thinking": {
+    "enabled": true
+  }
+}
