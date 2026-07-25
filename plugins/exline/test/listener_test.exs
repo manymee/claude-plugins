@@ -12,7 +12,9 @@ defmodule Exline.ListenerTest do
   ]
 
   setup do
-    sessions = start_supervised!({Sessions, thresholds: @thresholds, name: nil})
+    sessions =
+      start_supervised!({Sessions, thresholds: @thresholds, repeat_every: nil, name: nil})
+
     # sun_path caps at ~104 bytes, so keep the socket short and inside the repo.
     File.mkdir_p!("tmp")
     path = Path.expand("tmp/l#{System.unique_integer([:positive])}.sock")

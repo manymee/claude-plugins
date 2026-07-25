@@ -12,7 +12,8 @@ defmodule Exline.SessionsTest do
   @session "session-a"
 
   defp start_sessions(opts \\ []) do
-    opts = Keyword.merge([thresholds: @thresholds, name: nil], opts)
+    # repeat_every: nil keeps the default from reading the user's real config.
+    opts = Keyword.merge([thresholds: @thresholds, repeat_every: nil, name: nil], opts)
     start_supervised!({Sessions, opts})
   end
 
@@ -83,6 +84,52 @@ defmodule Exline.SessionsTest do
 
       assert %{percent: 40} = Sessions.hook_report(sessions, "a")
       assert Sessions.hook_report(sessions, "b") == nil
+    end
+  end
+
+  describe "repeating past the top threshold" do
+    test "re-reports the top message every step" do
+      sessions = start_sessions(repeat_every: 5)
+      Sessions.update(sessions, @session, 62)
+
+      assert %{percent: 60, message: "Context at 62% — third."} =
+               Sessions.hook_report(sessions, @session)
+
+      Sessions.update(sessions, @session, 64)
+      assert Sessions.hook_report(sessions, @session) == nil
+
+      Sessions.update(sessions, @session, 65)
+
+      assert %{percent: 65, message: "Context at 65% — third."} =
+               Sessions.hook_report(sessions, @session)
+
+      Sessions.update(sessions, @session, 71)
+      assert %{percent: 70, pct: 71} = Sessions.hook_report(sessions, @session)
+      assert Sessions.hook_report(sessions, @session) == nil
+    end
+
+    test "stays silent past the top threshold when no step is configured" do
+      sessions = start_sessions()
+      Sessions.update(sessions, @session, 75)
+      assert %{percent: 60} = Sessions.hook_report(sessions, @session)
+
+      Sessions.update(sessions, @session, 90)
+      assert Sessions.hook_report(sessions, @session) == nil
+    end
+
+    test "synthetic steps re-arm after a drop like real thresholds" do
+      sessions = start_sessions(repeat_every: 5)
+      Sessions.update(sessions, @session, 66)
+      assert %{percent: 65} = Sessions.hook_report(sessions, @session)
+
+      Sessions.update(sessions, @session, 45)
+      Sessions.update(sessions, @session, 55)
+      assert %{percent: 50} = Sessions.hook_report(sessions, @session)
+
+      Sessions.update(sessions, @session, 66)
+
+      assert %{percent: 65, message: "Context at 66% — third."} =
+               Sessions.hook_report(sessions, @session)
     end
   end
 

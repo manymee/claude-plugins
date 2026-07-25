@@ -123,7 +123,44 @@ defmodule Exline.SessionConfigTest do
     end
   end
 
+  describe "repeat_every/1" do
+    test "reads a positive integer", %{tmp_dir: dir} do
+      path = write_config(dir, ~s({"context_repeat_every": 5}))
+      assert SessionConfig.repeat_every(path) == 5
+    end
+
+    test "nil when the file or the key is missing", %{tmp_dir: dir} do
+      assert SessionConfig.repeat_every(Path.join(dir, "absent.json")) == nil
+      assert SessionConfig.repeat_every(write_config(dir, ~s({}))) == nil
+    end
+
+    test "warns and ignores a non-positive or non-integer value", %{tmp_dir: dir} do
+      for bad <- [~s("5"), "0", "-3", "2.5"] do
+        path = write_config(dir, ~s({"context_repeat_every": #{bad}}))
+
+        assert capture_log(fn -> assert SessionConfig.repeat_every(path) == nil end) =~
+                 "context_repeat_every"
+      end
+    end
+  end
+
   describe "Exline.Sessions wiring" do
+    test "loads its repeat step from the config file at init", %{tmp_dir: dir} do
+      path =
+        write_config(
+          dir,
+          ~s({"context_thresholds": [{"percent": 20, "message": "at {percent}"}], "context_repeat_every": 10})
+        )
+
+      System.put_env("EXLINE_CONFIG", path)
+      on_exit(fn -> System.delete_env("EXLINE_CONFIG") end)
+
+      sessions = start_supervised!({Sessions, name: nil})
+      Sessions.update(sessions, "s", 33)
+
+      assert %{percent: 30, message: "at 33"} = Sessions.hook_report(sessions, "s")
+    end
+
     test "loads its thresholds from the config file at init", %{tmp_dir: dir} do
       path =
         write_config(

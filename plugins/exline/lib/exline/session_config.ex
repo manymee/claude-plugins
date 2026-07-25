@@ -4,7 +4,8 @@ defmodule Exline.SessionConfig do
 
   The defaults live here; an optional JSON file overrides them:
 
-      {"context_thresholds": [{"percent": 40, "message": "Context at {percent}% — ..."}]}
+      {"context_thresholds": [{"percent": 40, "message": "Context at {percent}% — ..."}],
+       "context_repeat_every": 5}
 
   Read once at `Exline.Sessions` init, so editing the file takes effect on the
   next daemon restart (`/exline:setup`). A missing file means "no override" and
@@ -35,6 +36,27 @@ defmodule Exline.SessionConfig do
   @doc "Where the optional config file is looked up."
   def config_path do
     System.get_env("EXLINE_CONFIG") || Path.expand("~/.claude/exline.json")
+  end
+
+  @doc """
+  Optional step for re-reporting the top threshold's message past its percent
+  (`context_repeat_every` in the config file), or `nil` when not configured.
+  """
+  def repeat_every(path \\ config_path()) do
+    with {:ok, raw} <- File.read(path),
+         {:ok, %{"context_repeat_every" => value}} <- JSON.decode(raw) do
+      if is_integer(value) and value > 0 do
+        value
+      else
+        Logger.warning(
+          "exline: ignoring context_repeat_every in #{path}: must be a positive integer"
+        )
+
+        nil
+      end
+    else
+      _no_file_or_no_key -> nil
+    end
   end
 
   defp parse(raw, path) do

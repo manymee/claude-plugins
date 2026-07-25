@@ -37,12 +37,18 @@ the path):
   "context_thresholds": [
     { "percent": 40, "message": "Context at {percent}% — consider wrapping up soon." },
     { "percent": 70, "message": "Context at {percent}% — compact or start a fresh session." }
-  ]
+  ],
+  "context_repeat_every": 5
 }
 ```
 
 `{percent}` is replaced with the session's current usage. Without a config file
 the thresholds are 40, 50, 60 and 70 percent.
+
+`context_repeat_every` (optional) keeps the top threshold's message coming past
+its percent — every that many points (at 70+5k in the example above), with the
+updated percentage — so a session that sails past the last tier isn't left in
+silence. Omit it for one final report at the top threshold.
 
 `/exline:context on|off|status` toggles the reports for the current session
 only; the statusline carries a badge while they're off.

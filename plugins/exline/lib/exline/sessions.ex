@@ -11,6 +11,10 @@ defmodule Exline.Sessions do
   A report claims the threshold it fired for. The claim follows the percentage
   back *down* on the next update, so after a `/compact` the same thresholds
   re-arm and report again on the way back up.
+
+  With `repeat_every` set, the top threshold's message keeps firing every that
+  many percent past it (synthetic thresholds at top + k·step), so a session
+  sailing past the last configured tier is not left in silence.
   """
 
   use GenServer
@@ -58,6 +62,7 @@ defmodule Exline.Sessions do
     {:ok,
      %{
        thresholds: Enum.sort_by(thresholds, & &1.percent),
+       repeat_every: Keyword.get(opts, :repeat_every, Exline.SessionConfig.repeat_every()),
        now: Keyword.get(opts, :now, fn -> System.monotonic_time(:millisecond) end),
        sessions: %{}
      }}
@@ -130,7 +135,22 @@ defmodule Exline.Sessions do
     state.thresholds
     |> Enum.take_while(&(&1.percent <= pct))
     |> List.last()
+    |> step_past_top(state, pct)
   end
+
+  defp step_past_top(nil, _state, _pct), do: nil
+
+  defp step_past_top(threshold, %{repeat_every: step} = state, pct) when is_integer(step) do
+    top = List.last(state.thresholds)
+
+    if threshold.percent == top.percent do
+      %{threshold | percent: top.percent + div(trunc(pct) - top.percent, step) * step}
+    else
+      threshold
+    end
+  end
+
+  defp step_past_top(threshold, _state, _pct), do: threshold
 
   defp interpolate(message, pct), do: String.replace(message, "{percent}", to_string(pct))
 
