@@ -6,14 +6,13 @@ Plugin marketplace for Claude Code.
 
 ```
 /plugin marketplace add manymee/claude-plugins
-/plugin install context-aware@manymee
+/plugin install exline@manymee
 ```
 
 ## Plugins
 
 | Plugin | Description |
 |--------|-------------|
-| [context-aware](plugins/context-aware/) | Monitors context window usage and recommends handoff before exhaustion |
 | [exline](plugins/exline/) | Statusline daemon serving rendered status lines over a Unix socket |
 
 ## License

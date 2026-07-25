@@ -1,9 +1,0 @@
-{
-  "debug": false,
-  "thresholds": [
-    { "percent": 40, "message": "Context at {percent}% — Consider preparing a handoff soon." },
-    { "percent": 50, "message": "Context at {percent}% — Handoff recommended." },
-    { "percent": 60, "message": "Context at {percent}% — Handoff strongly recommended." },
-    { "percent": 70, "message": "Context at {percent}% — Auto-compaction risk. Handoff advised." }
-  ]
-}
