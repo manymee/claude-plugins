@@ -1,0 +1,141 @@
+{
+  "generated_at": 1753472700,
+  "datasets": {
+    "many": [
+      {
+        "session_id": "a0e50cd5",
+        "name": "board-state-logic-refactor",
+        "cwd": "~/my/code/claude-plugins",
+        "model": "Fable 5",
+        "status": "working",
+        "reason": "turn open — api advancing",
+        "since_s": 42,
+        "context_pct": 37,
+        "last_render_age_s": 1
+      },
+      {
+        "session_id": "b1f2e3d4",
+        "name": "exline session board — split",
+        "cwd": "~/my/code/claude-plugins",
+        "model": "Fable 5",
+        "status": "working",
+        "reason": "turn open — api quiet 8s (tool running?)",
+        "since_s": 313,
+        "context_pct": 61,
+        "last_render_age_s": 1
+      },
+      {
+        "session_id": "c2a9b8c7",
+        "name": "caddy config for board",
+        "cwd": "~/my/dotfiles",
+        "model": "Sonnet 5",
+        "status": "attention",
+        "reason": "permission prompt unanswered for 45s",
+        "since_s": 45,
+        "context_pct": 22,
+        "last_render_age_s": 0
+      },
+      {
+        "session_id": "d3b0c9d8",
+        "name": "invo timesheets july",
+        "cwd": "~/my/code/invo",
+        "model": "Opus 5",
+        "status": "attention",
+        "reason": "permission prompt unanswered for 3s",
+        "since_s": 3,
+        "context_pct": 78,
+        "last_render_age_s": 1
+      },
+      {
+        "session_id": "e4c1d0e9",
+        "name": "bugfix: teamwork sync",
+        "cwd": "~/work/sync",
+        "model": "Fable 5",
+        "status": "idle",
+        "reason": "turn closed by Stop",
+        "since_s": 130,
+        "context_pct": 54,
+        "last_render_age_s": 1
+      },
+      {
+        "session_id": "f5d2e1f0",
+        "name": "blog draft: exline",
+        "cwd": "~/my/writing",
+        "model": "Haiku 4.5",
+        "status": "idle",
+        "reason": "turn closed by idle-60s notification",
+        "since_s": 1520,
+        "context_pct": 12,
+        "last_render_age_s": 2
+      },
+      {
+        "session_id": "06e3f2a1",
+        "name": "scratch: jq experiments",
+        "cwd": "~/tmp",
+        "model": "Sonnet 5",
+        "status": "working",
+        "reason": "no turn state — api advanced 1s ago",
+        "since_s": 6,
+        "context_pct": 8,
+        "last_render_age_s": 1
+      },
+      {
+        "session_id": "17f4a3b2",
+        "name": "dotfiles tweaks",
+        "cwd": "~/my/dotfiles",
+        "model": "Sonnet 5",
+        "status": "stale",
+        "reason": "no renders for 5s",
+        "since_s": 5,
+        "context_pct": 44,
+        "last_render_age_s": 5
+      },
+      {
+        "session_id": "28a5b4c3",
+        "name": "pr review: marketplace",
+        "cwd": "~/my/code/claude-plugins",
+        "model": "Opus 5",
+        "status": "gone",
+        "reason": "no renders for 180s — session closed",
+        "since_s": 180,
+        "context_pct": 91,
+        "last_render_age_s": 180
+      }
+    ],
+    "few": [
+      {
+        "session_id": "a0e50cd5",
+        "name": "board-state-logic-refactor",
+        "cwd": "~/my/code/claude-plugins",
+        "model": "Fable 5",
+        "status": "working",
+        "reason": "turn open — api advancing",
+        "since_s": 42,
+        "context_pct": 37,
+        "last_render_age_s": 1
+      },
+      {
+        "session_id": "c2a9b8c7",
+        "name": "caddy config for board",
+        "cwd": "~/my/dotfiles",
+        "model": "Sonnet 5",
+        "status": "attention",
+        "reason": "permission prompt unanswered for 45s",
+        "since_s": 45,
+        "context_pct": 22,
+        "last_render_age_s": 0
+      },
+      {
+        "session_id": "e4c1d0e9",
+        "name": "bugfix: teamwork sync",
+        "cwd": "~/work/sync",
+        "model": "Fable 5",
+        "status": "idle",
+        "reason": "turn closed by Stop",
+        "since_s": 130,
+        "context_pct": 54,
+        "last_render_age_s": 1
+      }
+    ]
+  }
+}

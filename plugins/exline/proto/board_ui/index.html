@@ -1,0 +1,272 @@
+<!doctype html>
+<!--
+  PROTOTYPE (throwaway) — phone session board, 3 variants.
+
+  Question: what should the iPhone SE (568x320, Safari 15) board look like, and
+  does the board.json data shape carry what the display needs?
+
+  Variants on ?variant= (A rows / B tiles / C triage), mock data from board.json,
+  ?data=many|few toggles density. Floating bottom bar switches everything; it is
+  not part of the design being judged. Never ships — the real page is written
+  fresh once a variant wins.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>exline board (proto)</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: #0c0e12;
+    color: #e8eaf0;
+    font-family: -apple-system, "SF Pro", Helvetica, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+  #board { height: 100%; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+
+  /* status palette — the one shared piece across variants */
+  .c-working   { --c: #34d05e; }
+  .c-attention { --c: #ffb020; }
+  .c-idle      { --c: #ff5d5d; }
+  .c-stale     { --c: #6b7280; }
+  .c-gone      { --c: #3f4652; }
+
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+  .pulse { animation: pulse 1.2s ease-in-out infinite; }
+
+  /* ---------- variant A: fixed rows ---------- */
+  .va { display: flex; flex-direction: column; height: 100%; padding: 4px 6px; }
+  .va-row {
+    flex: 1 1 0; display: flex; align-items: center; gap: 8px;
+    border-left: 6px solid var(--c); background: #151920;
+    margin: 2px 0; border-radius: 4px; padding: 0 8px; min-height: 0;
+    overflow: hidden;
+  }
+  /* squeezed viewport (Safari chrome eats height): drop detail, shrink type */
+  .va.dense .va-cwd { display: none; }
+  .va.dense .va-name { font-size: 16px; }
+  .va.tight .va-name { font-size: 13px; font-weight: 600; }
+  .va.tight .va-pct { font-size: 13px; width: 40px; }
+  .va.tight .va-status { font-size: 10px; }
+  .va.tight .va-age { display: none; }
+  .va-row.s-stale, .va-row.s-gone { opacity: .45; }
+  .va-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--c); flex: none; }
+  .va-name { font-size: 19px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .va-cwd { font-size: 12px; color: #8b93a3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .va-main { flex: 1 1 auto; min-width: 0; }
+  .va-state { text-align: right; flex: none; }
+  .va-status { font-size: 13px; font-weight: 700; color: var(--c); text-transform: uppercase; letter-spacing: .05em; }
+  .va-age { font-size: 12px; color: #8b93a3; }
+  .va-pct { flex: none; width: 52px; text-align: right; font-size: 17px; font-variant-numeric: tabular-nums; color: #aab2c2; }
+
+  /* ---------- variant B: tiles ---------- */
+  .vb { display: grid; grid-template-columns: 1fr 1fr 1fr; grid-auto-rows: 1fr; gap: 6px; height: 100%; padding: 6px; }
+  .vb-tile {
+    background: var(--c); color: #0c0e12; border-radius: 10px;
+    padding: 8px 10px; display: flex; flex-direction: column; justify-content: space-between;
+    min-height: 0; overflow: hidden;
+  }
+  .vb-tile.s-stale, .vb-tile.s-gone { background: #1a1f27; color: #6b7280; }
+  .vb-name { font-size: 16px; font-weight: 700; line-height: 1.15; overflow: hidden; }
+  .vb-bottom { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; font-weight: 600; opacity: .85; }
+
+  /* ---------- variant C: triage bands ---------- */
+  .vc { display: flex; flex-direction: column; min-height: 100%; padding: 6px; gap: 6px; }
+  .vc-band-label { font-size: 11px; font-weight: 700; letter-spacing: .12em; color: #8b93a3; margin: 2px 2px 0; }
+  .vc-attn {
+    display: flex; align-items: center; gap: 12px; background: var(--c); color: #0c0e12;
+    border-radius: 10px; padding: 10px 14px;
+  }
+  .vc-attn-name { font-size: 22px; font-weight: 800; }
+  .vc-attn-why { font-size: 14px; font-weight: 600; opacity: .8; }
+  .vc-work {
+    display: flex; align-items: center; gap: 8px; padding: 4px 10px;
+    border-left: 5px solid var(--c); background: #151920; border-radius: 4px;
+  }
+  .vc-work-name { font-size: 17px; font-weight: 600; flex: 1 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .vc-work-note { font-size: 12px; color: #8b93a3; flex: none; }
+  .vc-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .vc-chip {
+    display: inline-flex; align-items: center; gap: 6px; background: #151920;
+    border: 1px solid #242b36; border-radius: 999px; padding: 4px 10px; font-size: 13px; font-weight: 600;
+  }
+  .vc-chip .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--c); }
+  .vc-chip .age { color: #8b93a3; font-weight: 400; }
+  .vc-chip.s-stale, .vc-chip.s-gone { opacity: .4; }
+  .vc-empty { color: #4a5261; font-size: 15px; padding: 6px 10px; }
+
+  /* ---------- switcher bar (not part of the design) ---------- */
+  #bar {
+    position: fixed; left: 50%; bottom: 8px; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 10px;
+    background: rgba(255,255,255,.92); color: #111; border-radius: 999px;
+    padding: 6px 12px; font-size: 13px; font-weight: 600;
+    box-shadow: 0 2px 12px rgba(0,0,0,.5); z-index: 10;
+  }
+  #bar button { border: 0; background: #111; color: #fff; border-radius: 999px; padding: 4px 10px; font-size: 13px; font-weight: 700; }
+</style>
+</head>
+<body>
+<div id="board"></div>
+<div id="bar">
+  <button id="prev">&#8592;</button>
+  <span id="label"></span>
+  <button id="next">&#8594;</button>
+  <button id="toggle"></button>
+</div>
+<script>
+var VARIANTS = { A: 'Rows', B: 'Tiles', C: 'Triage' };
+var ORDER = ['A', 'B', 'C'];
+var PRIORITY = { attention: 0, working: 1, idle: 2, stale: 3, gone: 4 };
+var LABEL = { working: 'working', attention: 'needs you', idle: 'ready', stale: 'stale', gone: 'gone' };
+
+var qs = new URLSearchParams(location.search);
+var state = {
+  variant: VARIANTS[qs.get('variant')] ? qs.get('variant') : 'A',
+  data: qs.get('data') === 'few' ? 'few' : 'many',
+  board: null
+};
+
+function fmtAge(s) {
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.round(s / 60) + 'm';
+  return (s / 3600).toFixed(1) + 'h';
+}
+function esc(t) {
+  return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function cls(s) { return 'c-' + s.status + ' s-' + s.status; }
+function byPriority(list) {
+  return list.slice().sort(function (a, b) {
+    return (PRIORITY[a.status] - PRIORITY[b.status]) || a.name.localeCompare(b.name);
+  });
+}
+
+/* A — fixed full-width rows, stable alphabetical order (positions stay
+   learnable), status shown by edge color + label, detail-rich. */
+function renderA(list) {
+  var rows = list.slice().sort(function (a, b) { return a.name.localeCompare(b.name); });
+  return '<div class="va">' + rows.map(function (s) {
+    var pulse = s.status === 'attention' ? ' pulse' : '';
+    return '<div class="va-row ' + cls(s) + pulse + '">' +
+      '<div class="va-dot"></div>' +
+      '<div class="va-main"><div class="va-name">' + esc(s.name) + '</div>' +
+      '<div class="va-cwd">' + esc(s.cwd) + ' · ' + esc(s.model) + '</div></div>' +
+      '<div class="va-pct">' + s.context_pct + '%</div>' +
+      '<div class="va-state"><div class="va-status">' + LABEL[s.status] + '</div>' +
+      '<div class="va-age">' + fmtAge(s.since_s) + '</div></div>' +
+      '</div>';
+  }).join('') + '</div>';
+}
+
+/* B — color-block tiles, sorted by urgency; the tile IS the signal,
+   readable from across the room, detail sacrificed. */
+function renderB(list) {
+  return '<div class="vb">' + byPriority(list).map(function (s) {
+    var pulse = s.status === 'attention' ? ' pulse' : '';
+    return '<div class="vb-tile ' + cls(s) + pulse + '">' +
+      '<div class="vb-name">' + esc(s.name) + '</div>' +
+      '<div class="vb-bottom"><span>' + LABEL[s.status] + ' ' + fmtAge(s.since_s) + '</span>' +
+      '<span>' + s.context_pct + '%</span></div>' +
+      '</div>';
+  }).join('') + '</div>';
+}
+
+/* C — triage bands: what needs you (huge), what runs (rows), the rest
+   (chips). Grouped by state, sizes proportional to urgency. */
+function renderC(list) {
+  var groups = { attention: [], working: [], rest: [] };
+  byPriority(list).forEach(function (s) {
+    if (s.status === 'attention') groups.attention.push(s);
+    else if (s.status === 'working') groups.working.push(s);
+    else groups.rest.push(s);
+  });
+  var h = '<div class="vc">';
+  h += '<div class="vc-band-label">NEEDS YOU</div>';
+  if (groups.attention.length === 0) {
+    h += '<div class="vc-empty">nothing — all quiet</div>';
+  } else {
+    h += groups.attention.map(function (s) {
+      return '<div class="vc-attn pulse ' + cls(s) + '">' +
+        '<div style="flex:1 1 auto;min-width:0"><div class="vc-attn-name">' + esc(s.name) + '</div>' +
+        '<div class="vc-attn-why">' + esc(s.reason) + '</div></div>' +
+        '<div style="font-size:20px;font-weight:800">' + fmtAge(s.since_s) + '</div>' +
+        '</div>';
+    }).join('');
+  }
+  h += '<div class="vc-band-label">WORKING</div>';
+  h += groups.working.map(function (s) {
+    return '<div class="vc-work ' + cls(s) + '">' +
+      '<div class="vc-work-name">' + esc(s.name) + '</div>' +
+      '<div class="vc-work-note">' + fmtAge(s.since_s) + ' · ' + s.context_pct + '%</div>' +
+      '</div>';
+  }).join('') || '<div class="vc-empty">none</div>';
+  h += '<div class="vc-band-label">READY / OTHER</div><div class="vc-chips">';
+  h += groups.rest.map(function (s) {
+    return '<span class="vc-chip ' + cls(s) + '"><span class="dot"></span>' +
+      esc(s.name) + ' <span class="age">' + fmtAge(s.since_s) + '</span></span>';
+  }).join('') || '<div class="vc-empty">none</div>';
+  h += '</div></div>';
+  return h;
+}
+
+var RENDER = { A: renderA, B: renderB, C: renderC };
+
+/* real Safari height is unknowable in advance (URL bar collapses/expands) —
+   measure after paint and degrade row detail when rows get too short */
+function adaptA() {
+  var va = document.querySelector('.va');
+  if (!va || !va.children.length) return;
+  var per = va.clientHeight / va.children.length;
+  va.classList.toggle('dense', per < 44);
+  va.classList.toggle('tight', per < 28);
+}
+
+function render() {
+  if (!state.board) return;
+  var list = state.board.datasets[state.data] || [];
+  document.getElementById('board').innerHTML = RENDER[state.variant](list);
+  adaptA();
+  document.getElementById('label').textContent = state.variant + ' — ' + VARIANTS[state.variant];
+  document.getElementById('toggle').textContent = state.data === 'many' ? '9 sess' : '3 sess';
+  var u = new URLSearchParams();
+  u.set('variant', state.variant);
+  u.set('data', state.data);
+  history.replaceState(null, '', '?' + u.toString());
+}
+
+function cycle(dir) {
+  var i = (ORDER.indexOf(state.variant) + dir + ORDER.length) % ORDER.length;
+  state.variant = ORDER[i];
+  render();
+}
+
+document.getElementById('prev').addEventListener('click', function () { cycle(-1); });
+document.getElementById('next').addEventListener('click', function () { cycle(1); });
+document.getElementById('toggle').addEventListener('click', function () {
+  state.data = state.data === 'many' ? 'few' : 'many';
+  render();
+});
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'ArrowLeft') cycle(-1);
+  if (e.key === 'ArrowRight') cycle(1);
+});
+window.addEventListener('resize', adaptA);
+window.addEventListener('orientationchange', function () { setTimeout(adaptA, 300); });
+
+function load() {
+  fetch('board.json?t=' + Date.now()).then(function (r) { return r.json(); }).then(function (b) {
+    state.board = b;
+    render();
+  });
+}
+load();
+setInterval(load, 3000);
+</script>
+</body>
+</html>
