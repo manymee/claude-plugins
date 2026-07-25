@@ -1,7 +1,22 @@
 #!/bin/sh
 
-{
-  jq --arg c "${COLUMNS:-0}" --arg l "${LINES:-0}" \
-     '. + {terminal: {columns: ($c|tonumber), lines: ($l|tonumber)}}'
-  printf '\0'
-} | nc -U /tmp/exline.sock
+# Prefer a dev daemon when one is up: the statusline follows
+# /tmp/exline-dev.sock (an `iex -S mix` session in the working copy) and falls
+# back to the launchd-managed daemon on /tmp/exline.sock. A stale dev socket
+# (crashed session) fails the connect instantly and falls through.
+
+DEV_SOCK=/tmp/exline-dev.sock
+SOCK=/tmp/exline.sock
+
+payload=$(jq --arg c "${COLUMNS:-0}" --arg l "${LINES:-0}" \
+  '. + {terminal: {columns: ($c|tonumber), lines: ($l|tonumber)}}')
+
+if [ -S "$DEV_SOCK" ]; then
+  out=$(printf '%s\0' "$payload" | nc -w 2 -U "$DEV_SOCK" 2>/dev/null)
+  if [ -n "$out" ]; then
+    printf '%s' "$out"
+    exit 0
+  fi
+fi
+
+printf '%s\0' "$payload" | nc -U "$SOCK"

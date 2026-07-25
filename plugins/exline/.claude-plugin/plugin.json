@@ -1,7 +1,7 @@
 {
   "name": "exline",
   "description": "Statusline daemon for Claude Code — Elixir app serving rendered status lines over a Unix socket",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": {
     "name": "manymee"
   },

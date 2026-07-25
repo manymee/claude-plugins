@@ -13,6 +13,41 @@ defmodule ExlineTest do
     end
   end
 
+  describe "drift line" do
+    test "is absent by default" do
+      refute Exline.format(%{}, now: @now) |> String.contains?("exline")
+    end
+
+    test "renders a trailing warning line when drift is given" do
+      out = Exline.format(%{}, now: @now, drift: {"0.1.0", "0.2.0"})
+      assert List.last(String.split(out, "\n")) ==
+               "⚠ exline 0.1.0 running, 0.2.0 installed — run /exline:setup"
+    end
+
+    test "styles the warning when color is on" do
+      out = Exline.format(%{}, now: @now, color: true, drift: {"0.1.0", "0.2.0"})
+      assert String.contains?(out, "\e[1;33m⚠ exline 0.1.0")
+    end
+  end
+
+  describe "dev badge" do
+    test "is absent by default" do
+      data = %{"version" => "2.0.0"}
+      refute Exline.format(data, now: @now) |> String.contains?("dev")
+    end
+
+    test "prefixes line 3 when dev: true" do
+      data = %{"version" => "2.0.0"}
+      out = Exline.format(data, now: @now, dev: true)
+      assert out |> String.split("\n") |> Enum.any?(&String.starts_with?(&1, "dev  v2.0.0"))
+    end
+
+    test "renders bold yellow when color is on" do
+      out = Exline.format(%{"version" => "2.0.0"}, now: @now, color: true, dev: true)
+      assert String.contains?(out, "\e[1;33mdev\e[0m")
+    end
+  end
+
   describe "line 1 (cwd path)" do
     test "is omitted when workspace.current_dir is absent" do
       refute Exline.format(%{}, now: @now) |> String.contains?("/")

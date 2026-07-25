@@ -24,4 +24,5 @@ exline-*.tar
 
 # Live captures written by Exline.Listener / Exline.Captures.
 /examples/captures/
+/examples/crashes/
 

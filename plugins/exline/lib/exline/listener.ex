@@ -4,30 +4,36 @@ defmodule Exline.Listener do
   use GenServer
   require Logger
 
-  @socket_path ~c"/tmp/exline.sock"
+  # The canonical socket served by the launchd/plugin daemon. Any other
+  # configured path means this instance is a dev daemon: its renders carry a
+  # `dev` badge so the statusline shows which daemon answered.
+  @prod_socket "/tmp/exline.sock"
 
   def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
 
   @impl true
   def init(:ok) do
-    listen_socket = open_socket()
+    path = Application.get_env(:exline, :socket_path, @prod_socket)
+    listen_socket = open_socket(path)
     send(self(), :accept)
-    {:ok, listen_socket}
+    {:ok, %{listen: listen_socket, path: path, dev?: path != @prod_socket}}
   end
 
   @impl true
-  def handle_info(:accept, listen_socket) do
-    case :gen_tcp.accept(listen_socket) do
+  def handle_info(:accept, state) do
+    case :gen_tcp.accept(state.listen) do
       {:ok, conn_socket} ->
+        dev? = state.dev?
+
         {:ok, pid} =
-          Task.Supervisor.start_child(Exline.ConnSupervisor, fn -> serve(conn_socket) end)
+          Task.Supervisor.start_child(Exline.ConnSupervisor, fn -> serve(conn_socket, dev?) end)
 
         :ok = :gen_tcp.controlling_process(conn_socket, pid)
         send(self(), :accept)
-        {:noreply, listen_socket}
+        {:noreply, state}
 
       {:error, :closed} ->
-        {:stop, :closed, listen_socket}
+        {:stop, :closed, state}
 
       # Transient failures like :emfile (fd exhaustion under connection
       # bursts): back off and retry rather than crash — repeated listener
@@ -36,22 +42,22 @@ defmodule Exline.Listener do
       {:error, reason} ->
         Logger.warning("exline: accept failed: #{inspect(reason)}, retrying")
         Process.send_after(self(), :accept, 100)
-        {:noreply, listen_socket}
+        {:noreply, state}
     end
   end
 
   @impl true
-  def terminate(_reason, listen_socket) do
-    :gen_tcp.close(listen_socket)
-    File.rm(@socket_path)
+  def terminate(_reason, state) do
+    :gen_tcp.close(state.listen)
+    File.rm(state.path)
     :ok
   end
 
-  defp open_socket do
+  defp open_socket(path) do
     options = [
       :binary,
       {:active, false},
-      {:ifaddr, {:local, @socket_path}}
+      {:ifaddr, {:local, path}}
     ]
 
     case :gen_tcp.listen(0, options) do
@@ -59,20 +65,20 @@ defmodule Exline.Listener do
         sock
 
       {:error, :eaddrinuse} ->
-        Logger.warning("exline: socket #{@socket_path} in use, unlinking")
-        File.rm!(@socket_path)
-        open_socket()
+        Logger.warning("exline: socket #{path} in use, unlinking")
+        File.rm!(path)
+        open_socket(path)
     end
   end
 
-  defp serve(conn_socket) do
+  defp serve(conn_socket, dev?) do
     input = read_until_null(conn_socket, [])
 
     response =
       case JSON.decode(input) do
         {:ok, json} ->
           Exline.Captures.save(input)
-          Exline.format(json, color: true)
+          render(input, json, dev?)
 
         {:error, reason} ->
           Logger.warning("exline: invalid json: #{inspect(reason)}")
@@ -81,6 +87,19 @@ defmodule Exline.Listener do
 
     :gen_tcp.send(conn_socket, response)
     :gen_tcp.close(conn_socket)
+  end
+
+  # A crashing render must not blank the statusline silently: persist the
+  # payload + stacktrace (the regular capture history buries them within
+  # seconds) and reply with the crash location so the failure is visible —
+  # in dev and prod alike.
+  defp render(input, json, dev?) do
+    Exline.format(json, color: true, drift: Exline.PluginVersion.drift(), dev: dev?)
+  catch
+    kind, reason ->
+      Logger.error("exline: render crashed: #{Exception.format(kind, reason, __STACKTRACE__)}")
+      path = Exline.Captures.save_crash(input, kind, reason, __STACKTRACE__)
+      "exline: render crashed — #{path}"
   end
 
   @recv_timeout 2_000

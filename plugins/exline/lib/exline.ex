@@ -33,6 +33,12 @@ defmodule Exline do
     * `:color` — emit ANSI styling (default: `false`). The live daemon passes
       `true`; tests and width math run color-free so plain layout stays
       byte-exact and measurable.
+    * `:drift` — `{running, installed}` version pair when the installed plugin
+      differs from the running daemon (default: `nil`). Renders a trailing
+      "run /exline:setup" line. The listener supplies it via
+      `Exline.PluginVersion.drift/0`; format itself does no IO.
+    * `:dev`   — `true` when a dev daemon (non-canonical socket) is rendering;
+      prefixes line 3 with a bold-yellow `dev` badge (default: `false`).
 
   Each line is built as a `{plain, styled}` pair. Width, truncation, and merge
   decisions use the plain text only; the styled text is what's emitted. Because
@@ -41,15 +47,26 @@ defmodule Exline do
   def format(data, opts \\ []) when is_map(data) do
     now = Keyword.get(opts, :now, System.system_time(:second))
     color? = Keyword.get(opts, :color, false)
+    dev? = Keyword.get(opts, :dev, false)
     width = terminal_columns(data)
 
     rows =
       pair_row(line1(data, width, color?), line2(data, color?), width) ++
-        pair_row(line3(data, color?), line4(data, now, color?), width)
+        pair_row(line3(data, color?, dev?), line4(data, now, color?), width) ++
+        drift_row(Keyword.get(opts, :drift), color?)
 
     rows
     |> Enum.reject(&is_nil/1)
     |> Enum.join("\n")
+  end
+
+  # Extra warning line shown only while the installed plugin version differs
+  # from the running daemon's — the cue to rebuild via /exline:setup.
+  defp drift_row(nil, _color?), do: []
+
+  defp drift_row({running, installed}, color?) do
+    text = "⚠ exline #{running} running, #{installed} installed — run /exline:setup"
+    [Style.paint(text, Style.behind(), color?)]
   end
 
   # Merge a left group and a right group onto one row when both carry content and
@@ -142,8 +159,9 @@ defmodule Exline do
     end
   end
 
-  defp line3(data, color?) do
+  defp line3(data, color?, dev?) do
     [
+      if(dev?, do: seg("dev", Style.behind(), color?)),
       seg(version(data), Style.bold(), color?),
       plain_seg(get_in(data, ["model", "display_name"])),
       seg(format_effort(get_in(data, ["effort", "level"])), Style.bold(), color?),
