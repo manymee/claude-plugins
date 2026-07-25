@@ -17,6 +17,40 @@ Line 1: truncated cwd. Line 2: git — repo, worktree, branch, dirty flags, ahea
 
 A long-lived Elixir daemon listens on a Unix socket. A small shell client pipes Claude Code's JSON payload to the socket on every statusline tick and prints the reply. The daemon is launchd-managed; the client is registered as Claude Code's `statusLine.command`.
 
+## Context monitoring
+
+Besides rendering the statusline, the daemon watches how full each session's
+context window is and speaks up as it fills. Two thin hooks — on `Stop` and
+`PostToolBatch` — ask the daemon whether the session has crossed a threshold;
+the daemon answers with ready-to-print hook JSON, at most once per threshold per
+session. A session stays silent until it crosses the first threshold. When usage
+drops — after a compaction, say — the reported mark follows it down to the
+highest threshold at or below the new usage, so every threshold above that one
+reports again on the way back up: after 55% → 45% the 40 threshold stays
+claimed, while 50 reports again once usage reaches it.
+
+Thresholds are configured in `~/.claude/exline.json` (`EXLINE_CONFIG` overrides
+the path):
+
+```json
+{
+  "context_thresholds": [
+    { "percent": 40, "message": "Context at {percent}% — consider wrapping up soon." },
+    { "percent": 70, "message": "Context at {percent}% — compact or start a fresh session." }
+  ]
+}
+```
+
+`{percent}` is replaced with the session's current usage. Without a config file
+the thresholds are 40, 50, 60 and 70 percent.
+
+`/exline:context on|off|status` toggles the reports for the current session
+only; the statusline carries a badge while they're off.
+
+The hooks fail open: no daemon, no socket, no `jq`/`nc` means no output and a
+clean exit, so a stopped daemon can never break a session. This feature replaces
+the retired `context-aware` plugin.
+
 ## Installing as a plugin
 
 Requirements on PATH: `elixir`/`mix` (Elixir ~> 1.19 / OTP 28 — `mise.toml`

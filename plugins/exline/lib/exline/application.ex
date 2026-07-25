@@ -10,7 +10,7 @@ defmodule Exline.Application do
   @impl true
   def start(_type, _args) do
     children =
-      [{Task.Supervisor, name: Exline.ConnSupervisor}, Exline.GitCache] ++
+      [{Task.Supervisor, name: Exline.ConnSupervisor}, Exline.GitCache, Exline.Sessions] ++
         if @start_listener, do: [Exline.Listener], else: []
 
     # See https://hexdocs.pm/elixir/Supervisor.html

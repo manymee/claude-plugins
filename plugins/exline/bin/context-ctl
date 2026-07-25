@@ -1,0 +1,75 @@
+#!/bin/sh
+
+# Per-session control for exline's context reports, driven by /exline:context.
+# This one runs where the user can see it, so unlike hooks/context-report.sh it
+# reports failures loudly instead of failing open.
+
+usage() {
+  printf 'usage: context-ctl --session <session-id> <on|off|status>\n' >&2
+}
+
+die() {
+  printf 'context-ctl: %s\n' "$1" >&2
+  exit 1
+}
+
+session_id=
+action=
+
+while [ $# -gt 0 ]; do
+  case $1 in
+    --session)
+      [ $# -ge 2 ] || { usage; exit 1; }
+      session_id=$2
+      shift 2
+      ;;
+    --session=*)
+      session_id=${1#--session=}
+      shift
+      ;;
+    on|off|status)
+      action=$1
+      shift
+      ;;
+    *)
+      printf 'context-ctl: unknown argument: %s\n' "$1" >&2
+      usage
+      exit 1
+      ;;
+  esac
+done
+
+if [ -z "$session_id" ] || [ -z "$action" ]; then
+  usage
+  exit 1
+fi
+
+command -v jq >/dev/null 2>&1 || die 'jq is required but not on PATH'
+command -v nc >/dev/null 2>&1 || die 'nc is required but not on PATH'
+
+request=$(jq -cn --arg session_id "$session_id" --arg action "$action" \
+  '{exline: "ctl", session_id: $session_id, action: $action}')
+
+DEV_SOCK=/tmp/exline-dev.sock
+PROD_SOCK=/tmp/exline.sock
+
+ask() {
+  printf '%s\0' "$request" | nc -w 2 -U "$1" 2>/dev/null
+}
+
+# Same daemon choice as the hook and the statusline client: EXLINE_SOCKET pins
+# one, otherwise a dev daemon wins and prod is only retried when the connect
+# itself fails (a stale dev socket file left by a crashed session).
+if [ -n "$EXLINE_SOCKET" ]; then
+  SOCK=$EXLINE_SOCKET
+  response=$(ask "$SOCK")
+elif [ -S "$DEV_SOCK" ] && response=$(ask "$DEV_SOCK"); then
+  SOCK=$DEV_SOCK
+else
+  SOCK=$PROD_SOCK
+  response=$(ask "$SOCK")
+fi
+
+[ -n "$response" ] || die "no response from the exline daemon on $SOCK — is it running?"
+
+printf '%s\n' "$response"

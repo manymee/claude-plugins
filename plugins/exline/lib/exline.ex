@@ -39,6 +39,10 @@ defmodule Exline do
       `Exline.PluginVersion.drift/0`; format itself does no IO.
     * `:dev`   — `true` when a dev daemon (non-canonical socket) is rendering;
       prefixes line 3 with a bold-yellow `dev` badge (default: `false`).
+    * `:ctx_report_off` — `true` when this session muted its context-threshold
+      reports; adds a bold-yellow `ctx-report off` badge next to the `dev` one
+      so the muting is never silent (default: `false`). The listener supplies it
+      from `Exline.Sessions`.
 
   Each line is built as a `{plain, styled}` pair. Width, truncation, and merge
   decisions use the plain text only; the styled text is what's emitted. Because
@@ -48,11 +52,12 @@ defmodule Exline do
     now = Keyword.get(opts, :now, System.system_time(:second))
     color? = Keyword.get(opts, :color, false)
     dev? = Keyword.get(opts, :dev, false)
+    ctx_report_off? = Keyword.get(opts, :ctx_report_off, false)
     width = terminal_columns(data)
 
     rows =
       pair_row(line1(data, width, color?), line2(data, color?), width) ++
-        pair_row(line3(data, color?, dev?), line4(data, now, color?), width) ++
+        pair_row(line3(data, color?, dev?, ctx_report_off?), line4(data, now, color?), width) ++
         drift_row(Keyword.get(opts, :drift), color?)
 
     rows
@@ -159,9 +164,10 @@ defmodule Exline do
     end
   end
 
-  defp line3(data, color?, dev?) do
+  defp line3(data, color?, dev?, ctx_report_off?) do
     [
       if(dev?, do: seg("dev", Style.behind(), color?)),
+      if(ctx_report_off?, do: seg("ctx-report off", Style.behind(), color?)),
       seg(version(data), Style.bold(), color?),
       plain_seg(get_in(data, ["model", "display_name"])),
       seg(format_effort(get_in(data, ["effort", "level"])), Style.bold(), color?),

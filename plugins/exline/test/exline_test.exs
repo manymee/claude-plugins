@@ -20,6 +20,7 @@ defmodule ExlineTest do
 
     test "renders a trailing warning line when drift is given" do
       out = Exline.format(%{}, now: @now, drift: {"0.1.0", "0.2.0"})
+
       assert List.last(String.split(out, "\n")) ==
                "⚠ exline 0.1.0 running, 0.2.0 installed — run /exline:setup"
     end
@@ -45,6 +46,43 @@ defmodule ExlineTest do
     test "renders bold yellow when color is on" do
       out = Exline.format(%{"version" => "2.0.0"}, now: @now, color: true, dev: true)
       assert String.contains?(out, "\e[1;33mdev\e[0m")
+    end
+  end
+
+  describe "ctx-report off badge" do
+    test "is absent by default" do
+      data = %{"version" => "2.0.0"}
+      refute Exline.format(data, now: @now) |> String.contains?("ctx-report")
+    end
+
+    test "leaves the rest of the output byte-identical when off" do
+      data = %{"version" => "2.0.0", "context_window" => %{"used_percentage" => 6}}
+
+      assert Exline.format(data, now: @now, ctx_report_off: false) ==
+               Exline.format(data, now: @now)
+    end
+
+    test "prefixes line 3 when ctx_report_off: true" do
+      data = %{"version" => "2.0.0"}
+      out = Exline.format(data, now: @now, ctx_report_off: true)
+
+      assert out
+             |> String.split("\n")
+             |> Enum.any?(&String.starts_with?(&1, "ctx-report off  v2.0.0"))
+    end
+
+    test "sits next to the dev badge when both are on" do
+      data = %{"version" => "2.0.0"}
+      out = Exline.format(data, now: @now, dev: true, ctx_report_off: true)
+
+      assert out
+             |> String.split("\n")
+             |> Enum.any?(&String.starts_with?(&1, "dev  ctx-report off  v2.0.0"))
+    end
+
+    test "renders bold yellow when color is on" do
+      out = Exline.format(%{"version" => "2.0.0"}, now: @now, color: true, ctx_report_off: true)
+      assert String.contains?(out, "\e[1;33mctx-report off\e[0m")
     end
   end
 
@@ -327,7 +365,8 @@ defmodule ExlineTest do
       # Filled to the usable width (COLUMNS minus the 3-col render margin).
       assert String.length(merged) == 197
       # Everything between the two groups is padding spaces.
-      assert merged |> String.trim_leading("v2.1.156") |> String.trim_trailing(rate_line) =~ ~r/^ +$/
+      assert merged |> String.trim_leading("v2.1.156") |> String.trim_trailing(rate_line) =~
+               ~r/^ +$/
     end
 
     test "keeps them stacked when the joined row would not fit" do
