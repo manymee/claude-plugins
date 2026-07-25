@@ -1,7 +1,0 @@
-{
-  "context_size": 200000,
-  "debug": true,
-  "thresholds": [
-    { "percent": 5, "message": "Context at {percent}% — [EXPERIMENT] Handoff required now." }
-  ]
-}
