@@ -187,6 +187,104 @@ defmodule Exline.ListenerTest do
     end
   end
 
+  describe "session board" do
+    defp board_row(path, session) do
+      %{"sessions" => rows} = JSON.decode!(request(path, %{"exline" => "board"}))
+      Enum.find(rows, &(&1["session_id"] == session))
+    end
+
+    defp rich_statusline(session) do
+      statusline(session, 42)
+      |> Map.merge(%{
+        "session_name" => "my task",
+        "cwd" => "/Users/x/proj",
+        "model" => %{"display_name" => "Fable 5"},
+        "cost" => %{"total_api_duration_ms" => 5000}
+      })
+    end
+
+    test "renders feed the board display fields", ctx do
+      request(ctx.path, rich_statusline(ctx.session))
+      row = board_row(ctx.path, ctx.session)
+
+      assert %{
+               "name" => "my task",
+               "cwd" => "/Users/x/proj",
+               "model" => "Fable 5",
+               "context_pct" => 42,
+               "status" => "idle",
+               "last_render_age_s" => 0
+             } = row
+    end
+
+    test "UserPromptSubmit opens the turn and stays a silent hook reply", ctx do
+      request(ctx.path, rich_statusline(ctx.session))
+      assert request(ctx.path, hook(ctx.session, "UserPromptSubmit")) == ""
+      assert %{"status" => "working"} = board_row(ctx.path, ctx.session)
+
+      assert request(ctx.path, hook(ctx.session, "Stop")) != ""
+      assert %{"status" => "idle"} = board_row(ctx.path, ctx.session)
+    end
+
+    test "a permission notification needs attention until activity resumes", ctx do
+      request(ctx.path, rich_statusline(ctx.session))
+
+      notification =
+        hook(ctx.session, "Notification")
+        |> Map.put("notification_type", "permission_prompt")
+        |> Map.put("message", "Permission required: Bash(npm test)")
+
+      assert request(ctx.path, notification) == ""
+      assert %{"status" => "attention"} = board_row(ctx.path, ctx.session)
+
+      request(ctx.path, hook(ctx.session, "PostToolBatch"))
+      assert %{"status" => "working"} = board_row(ctx.path, ctx.session)
+    end
+
+    test "an idle notification reads as ready", ctx do
+      request(ctx.path, rich_statusline(ctx.session))
+      request(ctx.path, hook(ctx.session, "UserPromptSubmit"))
+
+      notification =
+        hook(ctx.session, "Notification") |> Map.put("notification_type", "idle_prompt")
+
+      request(ctx.path, notification)
+      assert %{"status" => "idle"} = board_row(ctx.path, ctx.session)
+    end
+
+    test "notification kinds fall back to message text when untyped", ctx do
+      request(ctx.path, rich_statusline(ctx.session))
+
+      notification =
+        hook(ctx.session, "Notification")
+        |> Map.put("message", "Claude needs your permission to use Bash")
+
+      request(ctx.path, notification)
+      assert %{"status" => "attention"} = board_row(ctx.path, ctx.session)
+    end
+
+    test "an unrecognized notification changes nothing", ctx do
+      request(ctx.path, rich_statusline(ctx.session))
+      request(ctx.path, hook(ctx.session, "UserPromptSubmit"))
+
+      notification =
+        hook(ctx.session, "Notification")
+        |> Map.put("notification_type", "auth_success")
+        |> Map.put("message", "something else")
+
+      assert request(ctx.path, notification) == ""
+      assert %{"status" => "working"} = board_row(ctx.path, ctx.session)
+    end
+
+    test "the roster covers every session, sorted by name", ctx do
+      request(ctx.path, Map.put(rich_statusline("s-b"), "session_name", "bravo"))
+      request(ctx.path, Map.put(rich_statusline("s-a"), "session_name", "alpha"))
+
+      %{"sessions" => rows} = JSON.decode!(request(ctx.path, %{"exline" => "board"}))
+      assert Enum.map(rows, & &1["name"]) == ["alpha", "bravo"]
+    end
+  end
+
   describe "shutdown" do
     test "removes the socket file so the next start finds a clean path", ctx do
       assert File.exists?(ctx.path)

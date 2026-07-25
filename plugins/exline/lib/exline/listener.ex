@@ -16,6 +16,7 @@ defmodule Exline.Listener do
   #
   #   {"exline":"hook","event":"Stop","session_id":"…"} → hook JSON, or empty
   #   {"exline":"ctl","session_id":"…","action":"on"|"off"|"status"} → ctl JSON
+  #   {"exline":"board"} → session-board roster JSON
 
   def start_link(opts \\ []) do
     {name, opts} = Keyword.pop(opts, :name, __MODULE__)
@@ -133,26 +134,18 @@ defmodule Exline.Listener do
     :gen_tcp.close(conn_socket)
   end
 
-  # A hook asking whether this session has crossed a context threshold it has
-  # not been told about yet. Empty reply = nothing to say; the hook stays silent.
-  defp control("hook", %{"event" => event, "session_id" => session_id}, config)
-       when event in ["Stop", "PostToolBatch"] and is_binary(session_id) do
-    case Exline.Sessions.hook_report(config.sessions, session_id) do
-      nil ->
-        ""
+  # Every hook fire doubles as an activity beacon for the session board; Stop
+  # and PostToolBatch additionally ask whether this session has crossed a
+  # context threshold it has not been told about yet. Empty reply = nothing to
+  # say; the hook stays silent.
+  defp control("hook", %{"event" => event, "session_id" => session_id} = message, config)
+       when is_binary(session_id) do
+    if board_event = board_event(event, message),
+      do: Exline.Sessions.hook_event(config.sessions, session_id, board_event)
 
-      report ->
-        message = "[exline] " <> report.message
-
-        # systemMessage shows the warning to the user; additionalContext to the model.
-        JSON.encode!(%{
-          systemMessage: message,
-          hookSpecificOutput: %{
-            hookEventName: event,
-            additionalContext: message
-          }
-        })
-    end
+    if event in ["Stop", "PostToolBatch"],
+      do: threshold_report(event, session_id, config),
+      else: ""
   end
 
   defp control("hook", _message, _config), do: ""
@@ -174,7 +167,60 @@ defmodule Exline.Listener do
   defp control("ctl", %{"session_id" => session_id}, _config) when is_binary(session_id),
     do: JSON.encode!(%{ok: false, error: "unknown action"})
 
+  defp control("board", _message, config),
+    do: JSON.encode!(%{sessions: Exline.Sessions.board(config.sessions)})
+
   defp control(_kind, _message, _config), do: JSON.encode!(%{ok: false, error: "unknown message"})
+
+  defp threshold_report(event, session_id, config) do
+    case Exline.Sessions.hook_report(config.sessions, session_id) do
+      nil ->
+        ""
+
+      report ->
+        message = "[exline] " <> report.message
+
+        # systemMessage shows the warning to the user; additionalContext to the model.
+        JSON.encode!(%{
+          systemMessage: message,
+          hookSpecificOutput: %{
+            hookEventName: event,
+            additionalContext: message
+          }
+        })
+    end
+  end
+
+  defp board_event("Stop", _message), do: :stop
+  defp board_event("PostToolBatch", _message), do: :post_tool_batch
+  defp board_event("UserPromptSubmit", _message), do: :user_prompt_submit
+
+  # The Notification hook multiplexes; notification_type says which kind
+  # (hooks reference). Blocking dialogs mean the session needs the user.
+  defp board_event("Notification", %{"notification_type" => type}) when is_binary(type) do
+    cond do
+      type in ["permission_prompt", "elicitation_dialog", "agent_needs_input"] ->
+        {:notification, :permission}
+
+      type == "idle_prompt" ->
+        {:notification, :idle}
+
+      true ->
+        nil
+    end
+  end
+
+  # Fallback for payloads without notification_type (older CC): the message
+  # text. Ignore anything unrecognized rather than misclassify.
+  defp board_event("Notification", %{"message" => text}) when is_binary(text) do
+    cond do
+      text =~ ~r/permission/i -> {:notification, :permission}
+      text =~ ~r/waiting/i -> {:notification, :idle}
+      true -> nil
+    end
+  end
+
+  defp board_event(_event, _message), do: nil
 
   # A crashing render must not blank the statusline silently: persist the
   # payload + stacktrace (the regular capture history buries them within
@@ -194,15 +240,24 @@ defmodule Exline.Listener do
       "exline: render crashed — #{path}"
   end
 
-  # Feed the render's context percentage to the session tracker (the state the
-  # hook queries read) and report back whether this session muted its reports,
-  # which the render shows as a badge.
+  # Feed the render's context percentage and board fields to the session
+  # tracker (the state the hook and board queries read) and report back whether
+  # this session muted its reports, which the render shows as a badge.
   defp track_session(json, config) do
     session_id = json["session_id"]
     pct = get_in(json, ["context_window", "used_percentage"])
 
     if is_binary(session_id) do
-      if is_number(pct), do: Exline.Sessions.update(config.sessions, session_id, pct)
+      extra = %{
+        api_ms: get_in(json, ["cost", "total_api_duration_ms"]),
+        name: json["session_name"],
+        cwd: json["cwd"],
+        model: get_in(json, ["model", "display_name"])
+      }
+
+      if is_number(pct) or extra.api_ms,
+        do: Exline.Sessions.update(config.sessions, session_id, pct, extra)
+
       not Exline.Sessions.status(config.sessions, session_id).enabled
     else
       false

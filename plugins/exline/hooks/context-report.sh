@@ -1,9 +1,11 @@
 #!/bin/sh
 
-# Context-window threshold reports, registered for Stop and PostToolBatch. Asks
-# the daemon whether this session just crossed a threshold and prints whatever
-# hook JSON comes back. Fails open at every step: a missing dependency, a dead
-# daemon or a malformed payload must never interrupt the user's session.
+# Forwards hook events to the exline daemon and prints whatever hook JSON
+# comes back. Stop and PostToolBatch may answer with a context-threshold
+# report; every event doubles as an activity beacon for the session board
+# (Notification carries its message text so the daemon can tell a permission
+# prompt from an idle notice). Fails open at every step: a missing dependency,
+# a dead daemon or a malformed payload must never interrupt the user's session.
 
 command -v jq >/dev/null 2>&1 || exit 0
 command -v nc >/dev/null 2>&1 || exit 0
@@ -13,6 +15,8 @@ hook_input=$(cat)
 query=$(printf '%s' "$hook_input" | jq -c '
   select((.session_id // "") != "" and (.hook_event_name // "") != "")
   | {exline: "hook", event: .hook_event_name, session_id: .session_id}
+    + (if (.notification_type // "") != "" then {notification_type: .notification_type} else {} end)
+    + (if (.message // "") != "" then {message: .message} else {} end)
 ' 2>/dev/null)
 
 [ -n "$query" ] || exit 0

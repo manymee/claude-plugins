@@ -59,6 +59,24 @@ defmodule Exline.SessionConfig do
     end
   end
 
+  @doc """
+  TCP port for the session-board HTTP endpoint (`board_http_port` in the config
+  file), or `nil` when not configured — which leaves the endpoint off.
+  """
+  def board_http_port(path \\ config_path()) do
+    with {:ok, raw} <- File.read(path),
+         {:ok, %{"board_http_port" => value}} <- JSON.decode(raw) do
+      if is_integer(value) and value in 1..65_535 do
+        value
+      else
+        Logger.warning("exline: ignoring board_http_port in #{path}: must be a port number")
+        nil
+      end
+    else
+      _no_file_or_no_key -> nil
+    end
+  end
+
   defp parse(raw, path) do
     case JSON.decode(raw) do
       {:ok, %{"context_thresholds" => entries}} -> validate(entries, path)

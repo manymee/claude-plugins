@@ -49,6 +49,7 @@ defmodule Exline.Board.State do
   @doc "Fresh state for a session first seen at `now` (seconds, injectable clock)."
   def new(now) do
     %{
+      created_at: now,
       last_render_at: now,
       api_ms: nil,
       api_advanced_at: nil,
@@ -129,6 +130,29 @@ defmodule Exline.Board.State do
 
       true ->
         {:idle, "turn closed by " <> closer(s)}
+    end
+  end
+
+  @doc """
+  Seconds the session has been in `status` (as returned by `classify/2`),
+  anchored to the event that put it there.
+  """
+  def since(s, status, now) do
+    anchor =
+      case status do
+        :working -> s.turn_open_since || s.api_advanced_at || s.created_at
+        :attention -> s.pending_permission
+        :idle -> latest_closer(s) || s.created_at
+        _stale_or_gone -> s.last_render_at
+      end
+
+    now - (anchor || now)
+  end
+
+  defp latest_closer(s) do
+    case Enum.reject([s.hooks[:stop], s.hooks[:notif_idle]], &is_nil/1) do
+      [] -> nil
+      closers -> Enum.max(closers)
     end
   end
 

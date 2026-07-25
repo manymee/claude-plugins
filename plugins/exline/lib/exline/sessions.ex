@@ -28,9 +28,27 @@ defmodule Exline.Sessions do
     GenServer.start_link(__MODULE__, opts, if(name, do: [name: name], else: []))
   end
 
-  @doc "Record `pct` as the context percentage `session_id` is currently using."
-  def update(server \\ __MODULE__, session_id, pct),
-    do: GenServer.cast(server, {:update, session_id, pct})
+  @doc """
+  Record a statusline render for `session_id`: `pct` is the context percentage,
+  `extra` optionally carries the board fields sampled from the same payload
+  (`:api_ms`, `:name`, `:cwd`, `:model`).
+  """
+  def update(server \\ __MODULE__, session_id, pct, extra \\ %{}),
+    do: GenServer.cast(server, {:update, session_id, pct, extra})
+
+  @doc """
+  Feed a hook event into the session's board activity state. `event` is
+  `:stop`, `:post_tool_batch`, `:user_prompt_submit`,
+  `{:notification, :permission}` or `{:notification, :idle}`.
+  """
+  def hook_event(server \\ __MODULE__, session_id, event),
+    do: GenServer.cast(server, {:hook_event, session_id, event})
+
+  @doc """
+  The session board roster: one row per tracked session with its classified
+  activity status, ready for JSON encoding. Sorted by name for stable output.
+  """
+  def board(server \\ __MODULE__), do: GenServer.call(server, :board)
 
   @doc """
   Claim the pending threshold report for `session_id`, or `nil` when there is
@@ -69,7 +87,7 @@ defmodule Exline.Sessions do
   end
 
   @impl true
-  def handle_cast({:update, session_id, pct}, state) do
+  def handle_cast({:update, session_id, pct, extra}, state) do
     now = state.now.()
     entry = entry(state, session_id)
     threshold = crossed(state, pct)
@@ -82,8 +100,24 @@ defmodule Exline.Sessions do
         do: threshold && threshold.percent,
         else: entry.reported
 
-    entry = %{entry | pct: pct, reported: reported, updated_at: now}
+    entry = %{
+      entry
+      | pct: pct,
+        reported: reported,
+        updated_at: now,
+        board: Exline.Board.State.render(entry.board, extra[:api_ms], seconds(now)),
+        display: Map.merge(entry.display, Map.take(extra, [:name, :cwd, :model]), &keep_known/3)
+    }
+
     {:noreply, prune(%{state | sessions: Map.put(state.sessions, session_id, entry)}, now)}
+  end
+
+  def handle_cast({:hook_event, session_id, event}, state) do
+    now = state.now.()
+    entry = entry(state, session_id)
+    board = apply_event(entry.board, event, seconds(now))
+    entry = %{entry | board: board, updated_at: now}
+    {:noreply, %{state | sessions: Map.put(state.sessions, session_id, entry)}}
   end
 
   @impl true
@@ -121,12 +155,65 @@ defmodule Exline.Sessions do
     end
   end
 
-  # An entry may be created by a control message before the first statusline
-  # payload arrives, hence a nil percentage.
-  defp entry(state, session_id) do
-    state.sessions[session_id] ||
-      %{pct: nil, reported: nil, enabled: true, updated_at: state.now.()}
+  def handle_call(:board, _from, state) do
+    now = seconds(state.now.())
+
+    rows =
+      state.sessions
+      |> Enum.map(fn {session_id, entry} ->
+        {status, reason} = Exline.Board.State.classify(entry.board, now)
+
+        %{
+          session_id: session_id,
+          name: entry.display[:name],
+          cwd: entry.display[:cwd],
+          model: entry.display[:model],
+          status: status,
+          reason: reason,
+          since_s: Exline.Board.State.since(entry.board, status, now),
+          context_pct: entry.pct,
+          last_render_age_s: now - entry.board.last_render_at
+        }
+      end)
+      |> Enum.sort_by(&{&1.name || "", &1.session_id})
+
+    {:reply, rows, state}
   end
+
+  # An entry may be created by a control message or hook before the first
+  # statusline payload arrives, hence a nil percentage.
+  defp entry(state, session_id) do
+    now = state.now.()
+
+    state.sessions[session_id] ||
+      %{
+        pct: nil,
+        reported: nil,
+        enabled: true,
+        updated_at: now,
+        board: Exline.Board.State.new(seconds(now)),
+        display: %{}
+      }
+  end
+
+  # The board model thinks in seconds; the tracker clock is milliseconds.
+  defp seconds(ms), do: div(ms, 1000)
+
+  # A payload missing a display field must not blank a previously seen value.
+  defp keep_known(_key, old, new), do: new || old
+
+  defp apply_event(board, :stop, now), do: Exline.Board.State.stop(board, now)
+
+  defp apply_event(board, :post_tool_batch, now),
+    do: Exline.Board.State.post_tool_batch(board, now)
+
+  defp apply_event(board, :user_prompt_submit, now),
+    do: Exline.Board.State.user_prompt_submit(board, now)
+
+  defp apply_event(board, {:notification, kind}, now) when kind in [:permission, :idle],
+    do: Exline.Board.State.notification(board, kind, now)
+
+  defp apply_event(board, _unknown, _now), do: board
 
   # Highest threshold at or below `pct`, or nil when none is reached yet.
   defp crossed(_state, pct) when not is_number(pct), do: nil
