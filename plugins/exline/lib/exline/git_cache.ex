@@ -100,7 +100,10 @@ defmodule Exline.GitCache do
         {:noreply, state}
 
       key ->
-        Logger.warning("exline: git gather for #{key} exceeded #{state.gather_timeout}ms, killing")
+        Logger.warning(
+          "exline: git gather for #{key} exceeded #{state.gather_timeout}ms, killing"
+        )
+
         Process.exit(state.inflight[key].pid, :kill)
         {:noreply, state}
     end

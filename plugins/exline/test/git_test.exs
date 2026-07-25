@@ -79,7 +79,9 @@ defmodule Exline.GitTest do
 
   describe "parse/2 — root and worktree" do
     test "root is the basename of the toplevel" do
-      g = Git.parse(%{status: "# branch.head main\n", rev_parse: rev_parse("/a/b/dotfiles")}, @cwd)
+      g =
+        Git.parse(%{status: "# branch.head main\n", rev_parse: rev_parse("/a/b/dotfiles")}, @cwd)
+
       assert g.root == "dotfiles"
     end
 
