@@ -142,10 +142,14 @@ defmodule Exline.Listener do
         ""
 
       report ->
+        message = "[exline] " <> report.message
+
+        # systemMessage shows the warning to the user; additionalContext to the model.
         JSON.encode!(%{
+          systemMessage: message,
           hookSpecificOutput: %{
             hookEventName: event,
-            additionalContext: "[exline] " <> report.message
+            additionalContext: message
           }
         })
     end

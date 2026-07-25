@@ -84,6 +84,7 @@ defmodule Exline.ListenerTest do
       request(ctx.path, statusline(ctx.session, 45))
 
       assert JSON.decode!(request(ctx.path, hook(ctx.session, "Stop"))) == %{
+               "systemMessage" => "[exline] Context at 45% — handoff soon.",
                "hookSpecificOutput" => %{
                  "hookEventName" => "Stop",
                  "additionalContext" => "[exline] Context at 45% — handoff soon."
