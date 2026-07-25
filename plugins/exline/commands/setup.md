@@ -1,5 +1,5 @@
 ---
-description: Set up or update the exline statusline daemon — check deps, build, start, register
+description: Set up exline, or rebuild the daemon to match the installed plugin version — check deps, build, start, register
 ---
 
 Set up (or update) the exline statusline daemon on this machine. This command is
@@ -23,11 +23,12 @@ a prerequisite fails; don't half-install.
 ## 2. Check dependencies
 
 - `jq` and `nc` must be on PATH (the client uses both).
-- Elixir/Erlang: if `mise` is installed, run `mise install` in the plugin root
-  (mise.toml pins the tested versions), then use `mise exec -- mix ...` for the
-  build. Otherwise a system `elixir`/`mix` works if present.
-- If anything is missing, report exactly what and how to get it (e.g.
-  `brew install jq`, `brew install mise`), then stop.
+- `elixir` and `mix` must be on PATH. Elixir ~> 1.19 on OTP 28 is what's
+  tested (`mise.toml` records the exact versions); mix.exs rejects older
+  Elixir at build time.
+- Only check — never install anything on the user's behalf. If something is
+  missing, report exactly what's needed (e.g. `brew install jq`; Elixir via
+  brew/mise/asdf — their choice) and stop.
 
 ## 3. Build the release
 
@@ -46,8 +47,11 @@ install -m 755 "<PLUGIN_ROOT>/client" "<DATA>/client"
 
 ## 4. Start the daemon
 
-Ask the user: launchd (recommended — starts at login, restarts on crash) or a
-one-off manual start.
+If `~/Library/LaunchAgents/com.manymee.exline.plist` already exists, the user
+has already chosen launchd: refresh and restart it (steps below) without
+asking. Otherwise this is first-time setup — ask before touching launchd:
+launchd (recommended — starts at login, restarts on crash) or a one-off manual
+start, and respect a decline.
 
 **launchd** (macOS): render `<PLUGIN_ROOT>/launchd/com.manymee.exline.plist.template`
 — replace `__BIN__` with `<DATA>/rel/bin/exline`, `__WORKDIR__` with `<DATA>`,
@@ -72,8 +76,8 @@ Plugins can't set the main statusline, so this edits the user's
 "statusLine": { "type": "command", "command": "<DATA>/client" }
 ```
 
-Use the absolute expanded path — `${CLAUDE_PLUGIN_ROOT}` and `~` don't work in
-settings.json. If `statusLine` is already set to something else, show the
+Use the absolute expanded path — settings.json expands neither plugin-root
+variables nor `~`. If `statusLine` is already set to something else, show the
 current value and ask before replacing it.
 
 ## 6. Smoke test

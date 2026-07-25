@@ -19,8 +19,8 @@ A long-lived Elixir daemon listens on a Unix socket. A small shell client pipes 
 
 ## Installing as a plugin
 
-Requirements: Elixir/Erlang (or [mise](https://mise.jdx.dev), which installs the
-pinned versions from `mise.toml`), `jq`, `nc`.
+Requirements on PATH: `elixir`/`mix` (Elixir ~> 1.19 / OTP 28 — `mise.toml`
+records the tested versions), `jq`, `nc`.
 
 1. Install the plugin from the marketplace.
 2. Run `/exline:setup` — it checks dependencies, builds the release into the
