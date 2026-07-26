@@ -57,6 +57,36 @@ The hooks fail open: no daemon, no socket, no `jq`/`nc` means no output and a
 clean exit, so a stopped daemon can never break a session. This feature replaces
 the retired `context-aware` plugin.
 
+## Session board
+
+The daemon can serve a small web page with one row per open session — name,
+repo, state (working / needs you / ready / stale / gone) and context usage —
+meant for a phone on a desk stand (add to Home Screen for a chrome-less
+kiosk). Enable it with a port in `~/.claude/exline.json`; without the key the
+HTTP server does not start:
+
+```json
+{ "board_http_port": 8631 }
+```
+
+`GET /` serves the page, `GET /board.json` the roster it polls (every 3 s).
+
+Session state comes from two feeds: statusline renders carry name, cwd, model,
+context % and cumulative API time, while hooks (`UserPromptSubmit`,
+`PostToolBatch`, `Stop`, `Notification`) track whether a turn is open and
+whether Claude is waiting on a permission prompt. Sessions that stop rendering
+dim after a few seconds (`stale`, then `gone`) but stay listed until the 6 h
+prune, so parked tmux sessions remain visible. The classification rules live in
+`Exline.Board.State`; an interactive workbench walks them through canned
+scenarios:
+
+```sh
+mix run --no-start proto/board_state.exs
+```
+
+Note: hook registrations load when a Claude Code session starts, so after a
+plugin update the turn-tracking only works in sessions started since.
+
 ## Installing as a plugin
 
 Requirements on PATH: `elixir`/`mix` (Elixir ~> 1.19 / OTP 28 — `mise.toml`
