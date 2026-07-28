@@ -39,6 +39,8 @@ defmodule Exline do
       `Exline.PluginVersion.drift/0`; format itself does no IO.
     * `:dev`   — `true` when a dev daemon (non-canonical socket) is rendering;
       prefixes line 3 with a bold-yellow `dev` badge (default: `false`).
+    * `:git_fetch` — function returning the git fields for a cwd, or `nil`
+      when unavailable (default: `Exline.GitCache.fetch/1`; tests inject).
     * `:ctx_report_off` — `true` when this session muted its context-threshold
       reports; adds a bold-yellow `ctx-report off` badge next to the `dev` one
       so the muting is never silent (default: `false`). The listener supplies it
@@ -53,10 +55,11 @@ defmodule Exline do
     color? = Keyword.get(opts, :color, false)
     dev? = Keyword.get(opts, :dev, false)
     ctx_report_off? = Keyword.get(opts, :ctx_report_off, false)
+    git_fetch = Keyword.get(opts, :git_fetch, &Exline.GitCache.fetch/1)
     width = terminal_columns(data)
 
     rows =
-      pair_row(line1(data, width, color?), line2(data, color?), width) ++
+      pair_row(line1(data, width, color?), line2(data, color?, git_fetch), width) ++
         pair_row(line3(data, color?, dev?, ctx_report_off?), line4(data, now, color?), width) ++
         drift_row(Keyword.get(opts, :drift), color?)
 
@@ -145,13 +148,17 @@ defmodule Exline do
     {plain, styled}
   end
 
-  defp line2(data, color?) do
+  defp line2(data, color?, git_fetch) do
     case get_in(data, ["workspace", "current_dir"]) do
       nil ->
         nil
 
       cwd ->
-        g = Exline.GitCache.fetch(cwd)
+        # nil = the cache killed a hung gather at its deadline; render like a
+        # directory without git (basename only) instead of crashing.
+        g =
+          git_fetch.(cwd) ||
+            %{root: Path.basename(cwd), worktree: nil, branch: nil, status: nil, ahead_behind: nil}
 
         [
           seg(g.root, Style.bold(), color?),

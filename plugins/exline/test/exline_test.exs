@@ -191,6 +191,13 @@ defmodule ExlineTest do
       [_line1, line2 | _] = Exline.format(data, now: @now) |> String.split("\n")
       assert line2 == "dotfiles"
     end
+
+    test "falls back to the basename when the git cache returns nil (hung gather)" do
+      data = %{"workspace" => %{"current_dir" => @cwd}}
+      render = Exline.format(data, now: @now, git_fetch: fn _cwd -> nil end)
+      [_line1, line2 | _] = String.split(render, "\n")
+      assert line2 == "dotfiles"
+    end
   end
 
   describe "merging the path and git lines (terminal.columns)" do

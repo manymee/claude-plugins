@@ -27,7 +27,11 @@ defmodule Exline.GitCache do
   end
 
   @doc "Return the gathered git fields for `key` (a cwd), from cache or freshly."
-  def fetch(server \\ __MODULE__, key), do: GenServer.call(server, {:fetch, key})
+  # :infinity, not the default 5s: the server already bounds every fetch with
+  # its gather deadline (killed gathers reply nil), and a second, shorter
+  # timeout here races it — the caller crashes before the protection applies.
+  # A dead server still fails fast (calls to a dead process do not hang).
+  def fetch(server \\ __MODULE__, key), do: GenServer.call(server, {:fetch, key}, :infinity)
 
   @impl true
   def init(opts) do

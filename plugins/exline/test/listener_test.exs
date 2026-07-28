@@ -18,10 +18,15 @@ defmodule Exline.ListenerTest do
     # sun_path caps at ~104 bytes, so keep the socket short and inside the repo.
     File.mkdir_p!("tmp")
     path = Path.expand("tmp/l#{System.unique_integer([:positive])}.sock")
-    start_supervised!({Listener, socket_path: path, sessions: sessions, name: nil})
+    listener = start_supervised!({Listener, socket_path: path, sessions: sessions, name: nil})
     on_exit(fn -> File.rm(path) end)
 
-    %{path: path, sessions: sessions, session: "sess-#{System.unique_integer([:positive])}"}
+    %{
+      path: path,
+      listener: listener,
+      sessions: sessions,
+      session: "sess-#{System.unique_integer([:positive])}"
+    }
   end
 
   defp request(path, message) when is_map(message), do: request(path, JSON.encode!(message))
@@ -304,6 +309,22 @@ defmodule Exline.ListenerTest do
     @tag :capture_log
     test "answers invalid json with the plain error string", ctx do
       assert request(ctx.path, "{not json") == "exline: invalid json"
+    end
+  end
+
+  describe "leaked link exits" do
+    # Regression: a socket port left linked to the listener (handover raced the
+    # serving task) delivered {:EXIT, port, :normal} on close and the missing
+    # handle_info clause killed the listener — a daemon-wide statusline outage.
+    test "an :EXIT message from a lingering port does not kill the listener", ctx do
+      port = Port.open({:spawn, "cat"}, [:binary])
+      send(ctx.listener, {:EXIT, port, :normal})
+
+      # Synchronous call: the EXIT message above has been handled once it returns.
+      :sys.get_state(ctx.listener)
+      assert Process.alive?(ctx.listener)
+      assert request(ctx.path, statusline(ctx.session, 45)) != ""
+      Port.close(port)
     end
   end
 end

@@ -86,6 +86,16 @@ defmodule Exline.Listener do
     end
   end
 
+  # trap_exit (set in init/1 for terminate/2's sake) turns link exits into
+  # messages: an accepted socket whose controlling_process handover raced the
+  # serving task stays linked here and delivers {:EXIT, port, _} when it
+  # closes. Nothing to do — the accept loop already notices the listen socket
+  # dying via {:error, :closed}. Without this clause the message is a
+  # FunctionClauseError that takes the listener (and every session's
+  # statusline) down.
+  @impl true
+  def handle_info({:EXIT, _from, _reason}, state), do: {:noreply, state}
+
   @impl true
   def terminate(_reason, state) do
     :gen_tcp.close(state.listen)
