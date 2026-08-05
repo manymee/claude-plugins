@@ -91,9 +91,11 @@ defmodule Exline.GitCache do
       {key, refs} ->
         Process.demonitor(ref, [:flush])
         {%{waiters: waiters}, inflight} = Map.pop(state.inflight, key)
-        Enum.each(waiters, &GenServer.reply(&1, value))
+        # Store before replying: a waiter resumes the instant reply lands, and
+        # anything it does next must find this result already cached and stamped.
         deadline = state.now.() + state.ttl + state.jitter.()
         entries = Map.put(state.entries, key, {value, deadline})
+        Enum.each(waiters, &GenServer.reply(&1, value))
         {:noreply, %{state | refs: refs, inflight: inflight, entries: entries}}
     end
   end
