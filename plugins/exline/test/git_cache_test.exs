@@ -98,6 +98,138 @@ defmodule Exline.GitCacheTest do
     assert Agent.get(calls, & &1) == 2
   end
 
+  test "serves a stale entry at once instead of waiting on the refresh", %{sup: sup} do
+    test = self()
+    {:ok, clock} = Agent.start_link(fn -> 0 end)
+    {:ok, calls} = Agent.start_link(fn -> 0 end)
+
+    gather = fn key ->
+      case Agent.get_and_update(calls, &{&1 + 1, &1 + 1}) do
+        1 ->
+          :first
+
+        _ ->
+          send(test, {:gathering, self()})
+          receive do: (:proceed -> {:refreshed, key})
+      end
+    end
+
+    cache =
+      start_cache(
+        task_sup: sup,
+        ttl: 100,
+        gather: gather,
+        now: fn -> Agent.get(clock, & &1) end,
+        wait_timeout: 30_000
+      )
+
+    assert GitCache.fetch(cache, "/r") == :first
+    Agent.update(clock, fn _ -> 150 end)
+
+    refresh = Task.async(fn -> GitCache.fetch(cache, "/r") end)
+    assert_receive {:gathering, gpid}, 500
+
+    stale = Task.async(fn -> GitCache.fetch(cache, "/r") end)
+    assert Task.await(stale, 500) == :first, "a render must not queue behind a running refresh"
+
+    send(gpid, :proceed)
+    assert Task.await(refresh) == {:refreshed, "/r"}
+  end
+
+  test "falls back to the stale value when a refresh outlives the wait bound", %{sup: sup} do
+    {:ok, clock} = Agent.start_link(fn -> 0 end)
+    {:ok, calls} = Agent.start_link(fn -> 0 end)
+
+    gather = fn _ ->
+      case Agent.get_and_update(calls, &{&1 + 1, &1 + 1}) do
+        1 -> :first
+        _ -> Process.sleep(:infinity)
+      end
+    end
+
+    cache =
+      start_cache(
+        task_sup: sup,
+        ttl: 100,
+        gather: gather,
+        now: fn -> Agent.get(clock, & &1) end,
+        wait_timeout: 100,
+        gather_timeout: 30_000
+      )
+
+    assert GitCache.fetch(cache, "/r") == :first
+    Agent.update(clock, fn _ -> 150 end)
+
+    bounded = Task.async(fn -> GitCache.fetch(cache, "/r") end)
+    assert Task.await(bounded, 1000) == :first
+  end
+
+  test "returns nil within the wait bound when nothing is cached and the gather stalls",
+       %{sup: sup} do
+    cache =
+      start_cache(
+        task_sup: sup,
+        ttl: 1000,
+        now: fn -> 0 end,
+        gather: fn _ -> Process.sleep(:infinity) end,
+        wait_timeout: 100,
+        gather_timeout: 30_000
+      )
+
+    cold = Task.async(fn -> GitCache.fetch(cache, "/r") end)
+    assert Task.await(cold, 1000) == nil
+  end
+
+  test "caches a gather that finishes after its caller's wait bound elapsed", %{sup: sup} do
+    test = self()
+    {:ok, calls} = Agent.start_link(fn -> 0 end)
+
+    gather = fn key ->
+      Agent.update(calls, &(&1 + 1))
+      send(test, {:gathering, self()})
+      receive do: (:proceed -> {:late, key})
+    end
+
+    cache =
+      start_cache(
+        task_sup: sup,
+        ttl: 1000,
+        now: fn -> 0 end,
+        gather: gather,
+        wait_timeout: 50,
+        gather_timeout: 30_000
+      )
+
+    bounded = Task.async(fn -> GitCache.fetch(cache, "/r") end)
+    assert_receive {:gathering, gpid}, 500
+    assert Task.await(bounded, 1000) == nil
+
+    # The task sends its result to the cache before exiting, so its :DOWN
+    # orders our next call after the cache has handled that result.
+    gref = Process.monitor(gpid)
+    send(gpid, :proceed)
+    assert_receive {:DOWN, ^gref, :process, ^gpid, :normal}, 500
+
+    assert GitCache.fetch(cache, "/r") == {:late, "/r"}
+    assert Agent.get(calls, & &1) == 1, "the late result was cached, not re-gathered"
+  end
+
+  test "survives a wait deadline that lands after its gather already replied", %{sup: sup} do
+    cache =
+      start_cache(
+        task_sup: sup,
+        ttl: 1000,
+        now: fn -> 0 end,
+        gather: fn _ -> :v end,
+        wait_timeout: 20
+      )
+
+    ref = Process.monitor(cache)
+    assert GitCache.fetch(cache, "/r") == :v
+    refute_receive {:DOWN, ^ref, :process, ^cache, _}, 100
+    assert GitCache.fetch(cache, "/r") == :v
+  end
+
   @tag :capture_log
   test "kills a gather stuck past the deadline, replies nil, retries on the next fetch",
        %{sup: sup} do

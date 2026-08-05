@@ -7,6 +7,13 @@ defmodule Exline.GitCache do
   sessions poll or how often. Single-flight ensures that when several sessions
   miss the cache for the same repo at once, only one gather runs and all callers
   receive its result.
+
+  Renders never wait on a stalled gather. A caller that already has a value
+  cached for the key takes it stale instead of joining the in-flight gather —
+  the branch barely moves while git is wedged — and a caller with nothing
+  cached waits at most `wait_timeout` before falling back to whatever the cache
+  holds (nil when cold). Either way the statusline degrades to a stale or
+  missing git segment rather than freezing behind a hung git.
   """
 
   use GenServer
@@ -17,9 +24,13 @@ defmodule Exline.GitCache do
   # all expire on the same tick and stampede git at once.
   @default_jitter 1_000
   # Kill a gather that outlives this deadline: a hung git would otherwise pin
-  # its key in-flight forever (every later fetch coalesces onto it and times
-  # out) and hold the spawned port's fds. Waiters get nil via the :DOWN path.
+  # its key in-flight forever (no later fetch would ever refresh it) and hold
+  # the spawned port's fds. Waiters are answered via the :DOWN path.
   @default_gather_timeout 10_000
+  # How long a caller with nothing cached blocks on an in-flight gather. Short
+  # enough that a render stays interactive; the gather it was waiting on keeps
+  # running, so the value still lands for the next fetch.
+  @default_wait_timeout 1_000
 
   def start_link(opts \\ []) do
     {name, opts} = Keyword.pop(opts, :name, __MODULE__)
@@ -27,10 +38,10 @@ defmodule Exline.GitCache do
   end
 
   @doc "Return the gathered git fields for `key` (a cwd), from cache or freshly."
-  # :infinity, not the default 5s: the server already bounds every fetch with
-  # its gather deadline (killed gathers reply nil), and a second, shorter
-  # timeout here races it — the caller crashes before the protection applies.
-  # A dead server still fails fast (calls to a dead process do not hang).
+  # :infinity, not the default 5s: the server bounds every fetch itself (stale
+  # entries reply at once, cold callers at `wait_timeout`), and a second,
+  # shorter timeout here races that — the caller crashes before the protection
+  # applies. A dead server still fails fast (calls to a dead process do not hang).
   def fetch(server \\ __MODULE__, key), do: GenServer.call(server, {:fetch, key}, :infinity)
 
   @impl true
@@ -42,6 +53,7 @@ defmodule Exline.GitCache do
        now: Keyword.get(opts, :now, fn -> System.monotonic_time(:millisecond) end),
        gather: Keyword.get(opts, :gather, &Exline.Git.gather/1),
        gather_timeout: Keyword.get(opts, :gather_timeout, @default_gather_timeout),
+       wait_timeout: Keyword.get(opts, :wait_timeout, @default_wait_timeout),
        task_sup: Keyword.get(opts, :task_sup, Exline.ConnSupervisor),
        entries: %{},
        inflight: %{},
@@ -53,13 +65,16 @@ defmodule Exline.GitCache do
   def handle_call({:fetch, key}, from, state) do
     cond do
       fresh?(state, key) ->
-        {value, _at} = state.entries[key]
         observe("HIT cwd=#{key}")
-        {:reply, value, state}
+        {:reply, cached(state, key), state}
+
+      Map.has_key?(state.inflight, key) and Map.has_key?(state.entries, key) ->
+        observe("STALE cwd=#{key}")
+        {:reply, cached(state, key), state}
 
       Map.has_key?(state.inflight, key) ->
         observe("WAIT cwd=#{key}")
-        {:noreply, update_in(state.inflight[key].waiters, &[from | &1])}
+        {:noreply, add_waiter(state, key, from)}
 
       true ->
         {:noreply, start_gather(state, key, from)}
@@ -91,13 +106,30 @@ defmodule Exline.GitCache do
 
       {key, refs} ->
         {%{waiters: waiters}, inflight} = Map.pop(state.inflight, key)
-        Enum.each(waiters, &GenServer.reply(&1, nil))
+        Enum.each(waiters, &GenServer.reply(&1, cached(state, key)))
         {:noreply, %{state | refs: refs, inflight: inflight}}
     end
   end
 
+  # A waiter's bounded wait elapsed: hand it whatever is cached (nil when this
+  # is the key's first gather) and drop it, so the gather's eventual reply goes
+  # only to callers still waiting. A deadline for a waiter that has already been
+  # replied to — gather finished, or a later gather now holds the key — finds no
+  # matching waiter and does nothing.
+  def handle_info({:wait_deadline, key, from}, state) do
+    waiters = get_in(state.inflight, [key, :waiters]) || []
+
+    if from in waiters do
+      GenServer.reply(from, cached(state, key))
+      observe("BOUND cwd=#{key}")
+      {:noreply, put_in(state.inflight[key].waiters, List.delete(waiters, from))}
+    else
+      {:noreply, state}
+    end
+  end
+
   # Gather deadline elapsed: kill the task if it is still running; the
-  # resulting :DOWN message cleans up and replies nil to its waiters.
+  # resulting :DOWN message cleans up and answers any waiters left.
   def handle_info({:gather_deadline, ref}, state) do
     case state.refs[ref] do
       nil ->
@@ -122,6 +154,18 @@ defmodule Exline.GitCache do
     end
   end
 
+  defp cached(state, key) do
+    case state.entries[key] do
+      {value, _deadline} -> value
+      nil -> nil
+    end
+  end
+
+  defp add_waiter(state, key, from) do
+    Process.send_after(self(), {:wait_deadline, key, from}, state.wait_timeout)
+    update_in(state.inflight[key].waiters, &[from | &1])
+  end
+
   defp start_gather(state, key, from) do
     gather = state.gather
     observe? = observing?()
@@ -135,11 +179,13 @@ defmodule Exline.GitCache do
 
     Process.send_after(self(), {:gather_deadline, task.ref}, state.gather_timeout)
 
-    %{
+    state = %{
       state
-      | inflight: Map.put(state.inflight, key, %{waiters: [from], pid: task.pid}),
+      | inflight: Map.put(state.inflight, key, %{waiters: [], pid: task.pid}),
         refs: Map.put(state.refs, task.ref, key)
     }
+
+    add_waiter(state, key, from)
   end
 
   # Opt-in per-fetch logging, toggled live via

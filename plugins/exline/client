@@ -25,4 +25,4 @@ if [ -S "$DEV_SOCK" ]; then
   fi
 fi
 
-printf '%s\0' "$payload" | nc -U "$SOCK"
+printf '%s\0' "$payload" | nc -w 2 -U "$SOCK"
