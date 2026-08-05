@@ -91,12 +91,13 @@
 
   .empty { margin: auto; color: var(--faint); font-size: 18px; }
 
-  #offline {
+  #banner {
     display: none; position: fixed; top: 6px; left: 50%; transform: translateX(-50%);
     background: var(--c-idle); color: var(--bg); font-size: 13px; font-weight: 700;
     border-radius: 999px; padding: 4px 14px; z-index: 10;
   }
-  body.offline #offline { display: block; }
+  body.offline #banner, body.reconnecting #banner { display: block; }
+  body.reconnecting #banner { background: var(--pill-bg); color: var(--pill-fg); }
   body.offline #board { opacity: .5; }
 
   #ptr {
@@ -109,10 +110,14 @@
 </head>
 <body>
 <div id="board"></div>
-<div id="offline">daemon unreachable</div>
+<div id="banner"></div>
 <div id="ptr">release to reload</div>
 <script>
 var POLL_MS = 3000;
+var FETCH_TIMEOUT_MS = 2500;
+/* iOS freezes a backgrounded page's timers; a tick this far apart means the
+   page was suspended, not that anything went wrong out on the network */
+var SUSPEND_GAP_MS = POLL_MS * 3;
 var LABEL = { working: 'Working', attention: 'Needs you', idle: 'Ready', stale: 'Stale', gone: 'Gone' };
 
 function fmtAge(s) {
@@ -167,17 +172,89 @@ function render(sessions) {
   }).join('');
 }
 
+/* The badge accuses the daemon, so it must only ever speak for a poll this
+   page actually made: a suspended page reports how stale it is, never that
+   the daemon is down. */
+var lastOkAt = null;
+var lastTickAt = Date.now();
+var generation = 0;
+var inFlight = false;
+var inFlightSince = 0;
+var resuming = false;
+
+function banner(kind, text) {
+  document.getElementById('banner').textContent = text;
+  document.body.classList.toggle('offline', kind === 'offline');
+  document.body.classList.toggle('reconnecting', kind === 'reconnecting');
+}
+
+function unreachableText() {
+  if (lastOkAt == null) return 'daemon unreachable';
+  return 'daemon unreachable — data ' + fmtAge(Math.round((Date.now() - lastOkAt) / 1000)) + ' old';
+}
+
 function poll() {
-  fetch('/board.json?t=' + Date.now())
+  /* one request at a time: stacked polls against a slow daemon would eat
+     Safari's six connections per host. The deadline is the escape hatch for
+     a request that was in flight when the page got suspended. */
+  if (inFlight && Date.now() - inFlightSince < FETCH_TIMEOUT_MS) return;
+
+  var mine = ++generation;
+  inFlight = true;
+  inFlightSince = Date.now();
+  var controller = new AbortController();
+  var timeout = setTimeout(function () { controller.abort(); }, FETCH_TIMEOUT_MS);
+
+  fetch('/board.json?t=' + Date.now(), { signal: controller.signal })
     .then(function (r) { return r.json(); })
     .then(function (data) {
-      document.body.classList.remove('offline');
+      if (mine !== generation) return;
+      lastOkAt = Date.now();
+      resuming = false;
+      banner('', '');
       render(data.sessions || []);
     })
     .catch(function () {
-      document.body.classList.add('offline');
+      if (mine !== generation) return;
+      if (resuming) {
+        resuming = false;
+        banner('reconnecting', 'reconnecting…');
+      } else {
+        banner('offline', unreachableText());
+      }
+    })
+    .then(function () {
+      clearTimeout(timeout);
+      if (mine === generation) inFlight = false;
     });
 }
+
+/* Coming back from a suspension (or any wake event): the data on screen is
+   old but nothing is known to be wrong, so the first poll starts over. */
+function wake() {
+  var quiet = Date.now() - (lastOkAt == null ? lastTickAt : lastOkAt);
+  lastTickAt = Date.now();
+  if (quiet > SUSPEND_GAP_MS) {
+    resuming = true;
+    banner('reconnecting', 'reconnecting…');
+  }
+  poll();
+}
+
+function tick() {
+  if (Date.now() - lastTickAt > SUSPEND_GAP_MS) {
+    wake();
+  } else {
+    lastTickAt = Date.now();
+    poll();
+  }
+}
+
+document.addEventListener('visibilitychange', function () {
+  if (!document.hidden) wake();
+});
+window.addEventListener('pageshow', function () { wake(); });
+window.addEventListener('focus', function () { wake(); });
 
 /* pull-to-refresh: standalone mode has no browser chrome, so overscrolling
    down from the top reloads the page (full reload — also picks up new page
@@ -211,7 +288,7 @@ document.addEventListener('touchend', function () {
 });
 
 poll();
-setInterval(poll, POLL_MS);
+setInterval(tick, POLL_MS);
 </script>
 </body>
 </html>

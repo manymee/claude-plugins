@@ -24,7 +24,17 @@ defmodule Exline.Board.HTTP do
   def init(opts) do
     port = Keyword.fetch!(opts, :port)
 
-    options = [:binary, {:active, false}, {:reuseaddr, true}, {:packet, :raw}]
+    # Dual-stack on one socket: the host advertises both an A and an AAAA
+    # record over mDNS, and a v4-only listener costs every client a refused
+    # v6 connection (Happy Eyeballs) before it falls back.
+    options = [
+      :binary,
+      :inet6,
+      {:ipv6_v6only, false},
+      {:active, false},
+      {:reuseaddr, true},
+      {:packet, :raw}
+    ]
 
     case :gen_tcp.listen(port, options) do
       {:ok, listen_socket} ->
@@ -81,16 +91,33 @@ defmodule Exline.Board.HTTP do
   end
 
   @recv_timeout 2_000
+  @max_request_bytes 8_192
 
   defp serve(conn_socket, sessions) do
     response =
-      case :gen_tcp.recv(conn_socket, 0, @recv_timeout) do
+      case read_request(conn_socket, "") do
         {:ok, request} -> respond(request_path(request), sessions)
         {:error, _reason} -> nil
       end
 
     if response, do: :gen_tcp.send(conn_socket, response)
     :gen_tcp.close(conn_socket)
+  end
+
+  # Read to the end of the headers before answering. A request split across
+  # two TCP segments would otherwise leave unread bytes in the receive queue,
+  # which turns close into an RST and lets the client drop our response.
+  defp read_request(_socket, acc) when byte_size(acc) >= @max_request_bytes, do: {:ok, acc}
+
+  defp read_request(socket, acc) do
+    if String.contains?(acc, "\r\n\r\n") do
+      {:ok, acc}
+    else
+      case :gen_tcp.recv(socket, 0, @recv_timeout) do
+        {:ok, data} -> read_request(socket, acc <> data)
+        {:error, reason} -> if acc == "", do: {:error, reason}, else: {:ok, acc}
+      end
+    end
   end
 
   # First line of "GET /path HTTP/1.1\r\n…" — enough of HTTP for a poller.

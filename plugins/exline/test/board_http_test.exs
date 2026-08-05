@@ -11,22 +11,33 @@ defmodule Exline.Board.HTTPTest do
     %{sessions: sessions, port: HTTP.port(http)}
   end
 
-  defp get(port, path) do
-    {:ok, socket} = :gen_tcp.connect({127, 0, 0, 1}, port, [:binary, active: false])
+  defp get(port, path, address \\ {127, 0, 0, 1}) do
+    {:ok, socket} = connect(port, address)
     :ok = :gen_tcp.send(socket, "GET #{path} HTTP/1.1\r\nHost: board\r\n\r\n")
-    response = read_all(socket, [])
+    {response, _reason} = read_until_closed(socket, [])
     :gen_tcp.close(socket)
+    parse(response)
+  end
 
+  defp connect(port, address) when tuple_size(address) == 8 do
+    :gen_tcp.connect(address, port, [:binary, :inet6, active: false])
+  end
+
+  defp connect(port, address) do
+    :gen_tcp.connect(address, port, [:binary, active: false])
+  end
+
+  defp read_until_closed(socket, acc) do
+    case :gen_tcp.recv(socket, 0, 2_000) do
+      {:ok, data} -> read_until_closed(socket, [acc, data])
+      {:error, reason} -> {IO.iodata_to_binary(acc), reason}
+    end
+  end
+
+  defp parse(response) do
     [head, body] = String.split(response, "\r\n\r\n", parts: 2)
     [status_line | headers] = String.split(head, "\r\n")
     %{status: status_line, headers: headers, body: body}
-  end
-
-  defp read_all(socket, acc) do
-    case :gen_tcp.recv(socket, 0, 2_000) do
-      {:ok, data} -> read_all(socket, [acc, data])
-      {:error, _closed} -> IO.iodata_to_binary(acc)
-    end
   end
 
   test "GET /board.json answers the roster", ctx do
@@ -71,5 +82,26 @@ defmodule Exline.Board.HTTPTest do
 
   test "unknown paths get a 404", ctx do
     assert get(ctx.port, "/nope").status == "HTTP/1.1 404 Not Found"
+  end
+
+  # Answering the first segment would leave the rest of the request unread,
+  # which turns the close into an RST the client may answer by throwing the
+  # response away.
+  test "a request split across two segments is read whole, then answered", ctx do
+    {:ok, socket} = connect(ctx.port, {127, 0, 0, 1})
+    :ok = :gen_tcp.send(socket, "GET /board.json HTTP/1.1\r\n")
+
+    assert {:error, :timeout} = :gen_tcp.recv(socket, 0, 200)
+
+    :ok = :gen_tcp.send(socket, "Host: board\r\nAccept: */*\r\n\r\n")
+    {response, close_reason} = read_until_closed(socket, [])
+    :gen_tcp.close(socket)
+
+    assert parse(response).status == "HTTP/1.1 200 OK"
+    assert close_reason == :closed
+  end
+
+  test "the board answers on IPv6 loopback too", ctx do
+    assert get(ctx.port, "/board.json", {0, 0, 0, 0, 0, 0, 0, 1}).status == "HTTP/1.1 200 OK"
   end
 end
