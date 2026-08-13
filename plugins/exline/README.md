@@ -139,6 +139,12 @@ mix test                              # regression harness
 UPDATE_EXPECTED=1 mix test            # accept new output as expected
 ```
 
+When no daemon answers at all — connection refused, timed out, or the daemon
+is mid-restart — the client reprints the session's last successful render with
+a red ⚠ appended to its first line. The cached render lives under `$TMPDIR`,
+one file per session, written on every successful render. A ⚠ in the
+statusline therefore means: this is stale, the daemon is unreachable.
+
 A render crash never blanks the statusline silently: the daemon replies
 `exline: render crashed — <path>` and saves the payload plus stacktrace under
 `examples/crashes/` (last 20 kept — unlike `examples/captures/`, which rolls
