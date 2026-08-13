@@ -13,7 +13,9 @@ defmodule Exline.GitCache do
   the branch barely moves while git is wedged — and a caller with nothing
   cached waits at most `wait_timeout` before falling back to whatever the cache
   holds (nil when cold). Either way the statusline degrades to a stale or
-  missing git segment rather than freezing behind a hung git.
+  missing git segment rather than freezing behind a hung git. Those bounds are
+  the server's own, so a GitCache that has stopped answering at all is bounded
+  from the caller side instead — see `fetch/2`.
   """
 
   use GenServer
@@ -31,6 +33,10 @@ defmodule Exline.GitCache do
   # enough that a render stays interactive; the gather it was waiting on keeps
   # running, so the value still lands for the next fetch.
   @default_wait_timeout 1_000
+  # Caller-side bound on a fetch. Generous enough that the server-side bounds
+  # above stay authoritative whenever the cache is answering at all; it exists
+  # only for a GitCache that has stopped answering entirely.
+  @call_timeout @default_wait_timeout + 2_000
 
   def start_link(opts \\ []) do
     {name, opts} = Keyword.pop(opts, :name, __MODULE__)
@@ -38,11 +44,16 @@ defmodule Exline.GitCache do
   end
 
   @doc "Return the gathered git fields for `key` (a cwd), from cache or freshly."
-  # :infinity, not the default 5s: the server bounds every fetch itself (stale
-  # entries reply at once, cold callers at `wait_timeout`), and a second,
-  # shorter timeout here races that — the caller crashes before the protection
-  # applies. A dead server still fails fast (calls to a dead process do not hang).
-  def fetch(server \\ __MODULE__, key), do: GenServer.call(server, {:fetch, key}, :infinity)
+  # The server's own bounds only fire while the server is running them, so they
+  # are no protection against a wedged GitCache. Waiting unbounded there parks
+  # the caller — a serving task holding its accepted socket — forever; that is
+  # how the daemon once accumulated ~4000 fds and died with :emfile. Any exit
+  # (timeout, dead server) degrades to nil, which renders as a plain basename.
+  def fetch(server \\ __MODULE__, key) do
+    GenServer.call(server, {:fetch, key}, @call_timeout)
+  catch
+    :exit, _reason -> nil
+  end
 
   @impl true
   def init(opts) do
@@ -54,7 +65,7 @@ defmodule Exline.GitCache do
        gather: Keyword.get(opts, :gather, &Exline.Git.gather/1),
        gather_timeout: Keyword.get(opts, :gather_timeout, @default_gather_timeout),
        wait_timeout: Keyword.get(opts, :wait_timeout, @default_wait_timeout),
-       task_sup: Keyword.get(opts, :task_sup, Exline.ConnSupervisor),
+       task_sup: Keyword.get(opts, :task_sup, Exline.GitTaskSupervisor),
        entries: %{},
        inflight: %{},
        refs: %{}

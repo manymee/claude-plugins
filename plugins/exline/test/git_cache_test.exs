@@ -247,6 +247,41 @@ defmodule Exline.GitCacheTest do
     assert GitCache.fetch(cache, "/r") == :recovered
   end
 
+  # Regression: fetch/2 waited :infinity, so a GitCache that stopped answering
+  # (its own bounds cannot fire while it is wedged) parked every render — each
+  # holding its accepted socket — until the daemon ran out of fds. Slow by
+  # design: it spends the caller-side bound.
+  test "gives up and returns nil when the cache itself stops answering", %{sup: sup} do
+    cache = start_cache(task_sup: sup, gather: fn _ -> :never_reached end)
+    :sys.suspend(cache)
+
+    wedged = Task.async(fn -> GitCache.fetch(cache, "/r") end)
+    assert Task.await(wedged, 10_000) == nil
+  end
+
+  # Regression: gathers ran on Exline.ConnSupervisor, so a connection storm
+  # delayed the very git work whose slowness caused the storm.
+  test "runs gathers on a task supervisor of its own, off the connection path" do
+    test = self()
+
+    gather = fn key ->
+      send(test, {:gathering, self()})
+      receive do: (:proceed -> {:done, key})
+    end
+
+    # No :task_sup — this exercises the production default.
+    cache = start_cache(ttl: 1000, now: fn -> 0 end, gather: gather, wait_timeout: 30_000)
+
+    fetch = Task.async(fn -> GitCache.fetch(cache, "/r") end)
+    assert_receive {:gathering, gather_pid}, 500
+
+    assert gather_pid in Task.Supervisor.children(Exline.GitTaskSupervisor)
+    refute gather_pid in Task.Supervisor.children(Exline.ConnSupervisor)
+
+    send(gather_pid, :proceed)
+    assert Task.await(fetch) == {:done, "/r"}
+  end
+
   @tag :capture_log
   test "returns nil on a gather crash and retries on the next fetch", %{sup: sup} do
     {:ok, calls} = Agent.start_link(fn -> 0 end)

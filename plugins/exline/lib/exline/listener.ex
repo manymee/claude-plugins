@@ -60,11 +60,15 @@ defmodule Exline.Listener do
         {:ok, pid} =
           Task.Supervisor.start_child(Exline.ConnSupervisor, fn -> serve(conn_socket, config) end)
 
-        # A short reply (an empty hook answer) can be served and the connection
-        # closed before this handover runs, which fails — harmlessly, since a
-        # passive socket is readable from any process and the task closes it
-        # either way. Crashing the listener over it is the only real risk.
-        _ = :gen_tcp.controlling_process(conn_socket, pid)
+        # A short reply (an empty hook answer) can be served and the task gone
+        # before this handover runs, and then it fails. The socket then stays
+        # owned by this process, which never closes it — a leaked fd for the
+        # lifetime of the daemon. Closing an already-closed port is a no-op.
+        case :gen_tcp.controlling_process(conn_socket, pid) do
+          :ok -> :ok
+          {:error, _reason} -> :gen_tcp.close(conn_socket)
+        end
+
         send(self(), :accept)
         {:noreply, state}
 
@@ -141,6 +145,9 @@ defmodule Exline.Listener do
       end
 
     :gen_tcp.send(conn_socket, response)
+  after
+    # Every exit path closes: a crash between here and the send would otherwise
+    # leave the socket open for as long as this task's owner keeps it alive.
     :gen_tcp.close(conn_socket)
   end
 

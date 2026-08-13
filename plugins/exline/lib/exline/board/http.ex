@@ -66,7 +66,14 @@ defmodule Exline.Board.HTTP do
             serve(conn_socket, sessions)
           end)
 
-        _ = :gen_tcp.controlling_process(conn_socket, pid)
+        # A handover that loses the race to a task that already finished fails,
+        # leaving the socket owned by this process and never closed — a leaked
+        # fd. Closing an already-closed port is a no-op.
+        case :gen_tcp.controlling_process(conn_socket, pid) do
+          :ok -> :ok
+          {:error, _reason} -> :gen_tcp.close(conn_socket)
+        end
+
         send(self(), :accept)
         {:noreply, state}
 
@@ -101,6 +108,8 @@ defmodule Exline.Board.HTTP do
       end
 
     if response, do: :gen_tcp.send(conn_socket, response)
+  after
+    # Every exit path closes, not just the fall-through one.
     :gen_tcp.close(conn_socket)
   end
 

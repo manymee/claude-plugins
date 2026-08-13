@@ -9,8 +9,15 @@ defmodule Exline.Application do
 
   @impl true
   def start(_type, _args) do
+    # Gathers get a Task.Supervisor of their own: sharing ConnSupervisor put
+    # every gather start behind the connection churn it exists to relieve.
     children =
-      [{Task.Supervisor, name: Exline.ConnSupervisor}, Exline.GitCache, Exline.Sessions] ++
+      [
+        {Task.Supervisor, name: Exline.ConnSupervisor},
+        {Task.Supervisor, name: Exline.GitTaskSupervisor},
+        Exline.GitCache,
+        Exline.Sessions
+      ] ++
         if(@start_listener, do: [Exline.Listener], else: []) ++
         board_http()
 
