@@ -26,8 +26,11 @@
     <key>StandardErrorPath</key>
     <string>__LOG__</string>
 
+    <!-- Interactive: the daemon renders the user-facing statusline; Background
+         QoS gets throttled hardest exactly when the machine is busy, which made
+         the daemon unreachable under load. -->
     <key>ProcessType</key>
-    <string>Background</string>
+    <string>Interactive</string>
 
     <!-- launchd defaults to 256 open files; statusline poll bursts during a
          git slowdown exceed that and crash the daemon with emfile. -->
