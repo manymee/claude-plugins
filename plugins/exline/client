@@ -9,20 +9,59 @@
 DEV_SOCK=/tmp/exline-dev.sock
 SOCK=/tmp/exline.sock
 
-payload=$(jq --arg c "${COLUMNS:-0}" --arg l "${LINES:-0}" \
-  '. + {terminal: {columns: ($c|tonumber), lines: ($l|tonumber)}}')
+# One jq pass, because this runs on every render and a second interpreter start
+# is pure latency: session id first, then the enriched payload — compact, so it
+# is exactly one line and the two split apart on the first newline.
+input=$(jq -rc --arg c "${COLUMNS:-0}" --arg l "${LINES:-0}" \
+  '(.session_id // ""), (. + {terminal: {columns: ($c|tonumber), lines: ($l|tonumber)}})')
+
+newline='
+'
+payload=${input#*"$newline"}
+
+# The session id ends up in a filesystem path, so drop everything that could
+# steer it elsewhere. Nothing left (or nothing given) means no cache at all.
+session_id=$(printf '%s' "${input%%"$newline"*}" | tr -cd 'A-Za-z0-9._-')
+cache=""
+[ -n "$session_id" ] && cache="${TMPDIR:-/tmp}/exline-last-$session_id"
+
+# Non-empty output is the success signal rather than the exit status: nc
+# variants disagree about what they return for a failed unix connect.
+ask() {
+  printf '%s\0' "$payload" | nc -w 2 -U "$1" 2>/dev/null
+}
 
 if [ -n "$EXLINE_SOCKET" ]; then
-  printf '%s\0' "$payload" | nc -w 2 -U "$EXLINE_SOCKET"
-  exit
+  out=$(ask "$EXLINE_SOCKET")
+else
+  out=""
+  [ -S "$DEV_SOCK" ] && out=$(ask "$DEV_SOCK")
+  [ -z "$out" ] && out=$(ask "$SOCK")
 fi
 
-if [ -S "$DEV_SOCK" ]; then
-  out=$(printf '%s\0' "$payload" | nc -w 2 -U "$DEV_SOCK" 2>/dev/null)
-  if [ -n "$out" ]; then
-    printf '%s' "$out"
-    exit 0
+if [ -n "$out" ]; then
+  printf '%s' "$out"
+
+  # Write beside the cache and rename over it: a client reading while another
+  # writes must never get half a render.
+  if [ -n "$cache" ]; then
+    scratch="$cache.$$"
+    if printf '%s' "$out" >"$scratch" 2>/dev/null; then
+      mv -f "$scratch" "$cache" 2>/dev/null || rm -f "$scratch"
+    else
+      rm -f "$scratch"
+    fi
   fi
+
+  exit 0
 fi
 
-printf '%s\0' "$payload" | nc -w 2 -U "$SOCK"
+# No daemon answered. A blank statusline hides the outage and loses the line
+# entirely, so reprint the last good render for this session and mark it stale.
+# The marker goes on the first line: renders are multi-line and that is where
+# the eye lands.
+if [ -n "$cache" ] && [ -s "$cache" ]; then
+  cached=$(cat "$cache")
+  first=${cached%%"$newline"*}
+  printf '%s \033[1;31m⚠\033[0m%s' "$first" "${cached#"$first"}"
+fi

@@ -312,6 +312,36 @@ defmodule Exline.ListenerTest do
     end
   end
 
+  describe "connection bursts" do
+    # Regression: with gen_tcp's default backlog of 5, a burst that arrived
+    # while the accept loop was starved of CPU overflowed the listen queue and
+    # every further connect was refused instantly — every session's statusline
+    # went blank at once. Suspending the listener is the same condition without
+    # the CPU starvation: nothing drains the queue while the burst arrives.
+    test "queue up while the accept loop is not draining them", ctx do
+      :sys.suspend(ctx.listener)
+
+      results =
+        try do
+          for _ <- 1..20,
+              do: :gen_tcp.connect({:local, ctx.path}, 0, [:binary, active: false], 2_000)
+        after
+          :sys.resume(ctx.listener)
+        end
+
+      refused = Enum.reject(results, &match?({:ok, _socket}, &1))
+      assert refused == [], "#{length(refused)}/20 connects refused: #{inspect(refused)}"
+
+      # And the queue really was a queue: every waiting connect gets served once
+      # the loop runs again.
+      for {:ok, socket} <- results do
+        :ok = :gen_tcp.send(socket, JSON.encode!(statusline(ctx.session, 45)) <> <<0>>)
+        assert read_response(socket, []) =~ "45.0%"
+        :gen_tcp.close(socket)
+      end
+    end
+  end
+
   describe "leaked link exits" do
     # Regression: a socket port left linked to the listener (handover raced the
     # serving task) delivered {:EXIT, port, :normal} on close and the missing

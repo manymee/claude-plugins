@@ -111,7 +111,12 @@ defmodule Exline.Listener do
     options = [
       :binary,
       {:active, false},
-      {:ifaddr, {:local, path}}
+      {:ifaddr, {:local, path}},
+      # gen_tcp defaults to 5. A burst that arrives while the accept loop is
+      # starved of CPU has to queue until the loop catches up; overflowing the
+      # queue refuses the connect instantly and blanks that statusline. The
+      # client's 2 s timeout bounds how long a queued connect waits.
+      {:backlog, 128}
     ]
 
     case :gen_tcp.listen(0, options) do
