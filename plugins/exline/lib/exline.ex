@@ -104,11 +104,12 @@ defmodule Exline do
   defp styled(nil), do: nil
   defp styled({_, s}), do: s
 
-  # Columns Claude Code reserves on the right before it hard-clips the status
-  # line itself (measured at 3 on a 39-col terminal: COLUMNS=39, render=36).
-  # Targeting COLUMNS minus this keeps our left-collapse ahead of CC's clip, so
-  # truncation reads as `.../tail` rather than CC's right-side ellipsis.
-  @render_margin 3
+  # Columns Claude Code reserves around the status line before it hard-clips
+  # it: paddingX:2 on the row container, so 4 total since CC 2.1.236 (older
+  # versions reserved 3 — paddingLeft:2, paddingRight:1). Targeting COLUMNS
+  # minus this keeps our left-collapse ahead of CC's clip, so truncation reads
+  # as `.../tail` rather than CC's right-side ellipsis.
+  @render_margin 4
 
   # Usable render width derived from the terminal's COLUMNS env var (forwarded
   # by the client). A positive integer enables width-aware path truncation;

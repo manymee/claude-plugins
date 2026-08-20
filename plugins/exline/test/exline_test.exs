@@ -146,7 +146,7 @@ defmodule ExlineTest do
     test "collapses from the left, keeping as many trailing segments as fit" do
       data = %{
         "workspace" => %{"current_dir" => "/Users/me/my/dotfiles/custom/exline"},
-        "terminal" => %{"columns" => 20}
+        "terminal" => %{"columns" => 21}
       }
 
       [line1 | _] = Exline.format(data, now: @now) |> String.split("\n")
@@ -208,14 +208,14 @@ defmodule ExlineTest do
       assert String.starts_with?(merged, @cwd)
       # Flush right: ends exactly with the git group, no trailing pad.
       assert String.ends_with?(merged, "dotfiles")
-      # Filled to the usable width (COLUMNS minus the 3-col render margin).
-      assert String.length(merged) == 197
+      # Filled to the usable width (COLUMNS minus the 4-col render margin).
+      assert String.length(merged) == 196
       # Everything between the two groups is padding spaces.
       assert merged |> String.trim_leading(@cwd) |> String.trim_trailing("dotfiles") =~ ~r/^ +$/
     end
 
     test "keeps them stacked when the joined row would not fit" do
-      data = %{"workspace" => %{"current_dir" => @cwd}, "terminal" => %{"columns" => 32}}
+      data = %{"workspace" => %{"current_dir" => @cwd}, "terminal" => %{"columns" => 33}}
       [line1, line2 | _] = Exline.format(data, now: @now) |> String.split("\n")
       assert line1 == @cwd
       assert line2 == "dotfiles"
@@ -369,8 +369,8 @@ defmodule ExlineTest do
       assert String.starts_with?(merged, "v2.1.156")
       # Flush right: ends exactly with the rate line, no trailing pad.
       assert String.ends_with?(merged, rate_line)
-      # Filled to the usable width (COLUMNS minus the 3-col render margin).
-      assert String.length(merged) == 197
+      # Filled to the usable width (COLUMNS minus the 4-col render margin).
+      assert String.length(merged) == 196
       # Everything between the two groups is padding spaces.
       assert merged |> String.trim_leading("v2.1.156") |> String.trim_trailing(rate_line) =~
                ~r/^ +$/
@@ -443,7 +443,7 @@ defmodule ExlineTest do
 
       assert merged =~ "\e["
       visible = strip(merged)
-      assert String.length(visible) == 197
+      assert String.length(visible) == 196
       assert String.starts_with?(visible, @cwd)
       assert String.ends_with?(visible, "dotfiles")
     end
