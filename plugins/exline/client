@@ -63,5 +63,19 @@ fi
 if [ -n "$cache" ] && [ -s "$cache" ]; then
   cached=$(cat "$cache")
   first=${cached%%"$newline"*}
-  printf '%s \033[1;31m⚠\033[0m%s' "$first" "${cached#"$first"}"
+  rest=${cached#"$first"}
+
+  # Merged rows arrive padded flush to the usable width, so the marker's two
+  # columns must come out of the middle padding run — appended as-is they would
+  # overflow and Claude Code would clip the line's tail into "…". Render
+  # content never carries three consecutive spaces; only the pad run does.
+  case $first in
+    *"   "*)
+      before_pad=${first%%"   "*}
+      after_pad=${first#*"   "}
+      first="$before_pad $after_pad"
+      ;;
+  esac
+
+  printf '%s \033[1;31m⚠\033[0m%s' "$first" "$rest"
 fi

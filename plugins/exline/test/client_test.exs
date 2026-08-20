@@ -89,6 +89,20 @@ defmodule Exline.ClientTest do
                "first line #{@stale_marker}\nsecond line"
     end
 
+    test "reclaims the marker's columns from a padded first line", ctx do
+      # A merged row comes back padded flush to the usable width; appending the
+      # marker as-is would overflow it and CC would clip the tail. Two spaces
+      # come out of the pad run instead, so the marked line keeps its width.
+      padded = "path" <> String.duplicate(" ", 20) <> "git info"
+      File.write!(cache_path(ctx), padded <> "\nsecond line")
+
+      output = run(ctx, dead_socket(ctx), payload(ctx.session))
+
+      assert output ==
+               "path" <>
+                 String.duplicate(" ", 18) <> "git info #{@stale_marker}\nsecond line"
+    end
+
     test "prints nothing when the session has no cached render", ctx do
       assert run(ctx, dead_socket(ctx), payload(ctx.session)) == ""
     end
