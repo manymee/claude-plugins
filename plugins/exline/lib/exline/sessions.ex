@@ -45,8 +45,14 @@ defmodule Exline.Sessions do
     do: GenServer.cast(server, {:hook_event, session_id, event})
 
   @doc """
-  The session board roster: one row per tracked session with its classified
+  The session board roster: one row per live session with its classified
   activity status, ready for JSON encoding. Sorted by name for stable output.
+
+  Membership follows Claude Code's own session registry (`Exline.Board.SelfReport`)
+  wherever it can: a session whose registry file names a process that is no
+  longer running has quit, so it leaves the board — and this tracker — at once,
+  and a running session appears even if no statusline render was ever seen from
+  it. Only sessions the registry cannot speak for fall back to render age.
   """
   def board(server \\ __MODULE__), do: GenServer.call(server, :board)
 
@@ -86,6 +92,8 @@ defmodule Exline.Sessions do
        # so CLAUDE_CONFIG_DIR is honoured even if it changes under the daemon.
        self_report_dir:
          Keyword.get(opts, :self_report_dir, Application.get_env(:exline, :self_report_dir)),
+       # Injectable so tests decide liveness without forking ps.
+       liveness: Keyword.get(opts, :liveness, &Exline.Board.Liveness.check/1),
        sessions: %{}
      }}
   end
@@ -161,31 +169,81 @@ defmodule Exline.Sessions do
 
   def handle_call(:board, _from, state) do
     now = seconds(state.now.())
-    # One directory scan for the whole roster, not one per session.
+    # One directory scan and one liveness check for the whole roster, not one
+    # per session.
     dir = state.self_report_dir || Exline.Board.SelfReport.default_dir()
     reports = Exline.Board.SelfReport.scan(dir)
+    liveness = state.liveness.(reports)
+
+    {tracked, kept} = tracked_rows(state.sessions, reports, liveness, now)
 
     rows =
-      state.sessions
-      |> Enum.map(fn {session_id, entry} ->
-        report = reports[session_id]
-        {status, reason} = Exline.Board.State.classify(entry.board, now, report)
-
-        %{
-          session_id: session_id,
-          name: entry.display[:name],
-          cwd: entry.display[:cwd],
-          model: entry.display[:model],
-          status: status,
-          reason: reason,
-          since_s: Exline.Board.State.since(entry.board, status, now, report),
-          context_pct: entry.pct,
-          last_render_age_s: now - entry.board.last_render_at
-        }
-      end)
+      (tracked ++ registry_rows(state.sessions, reports, liveness))
       |> Enum.sort_by(&{&1.name || "", &1.session_id})
 
-    {:reply, rows, state}
+    {:reply, rows, %{state | sessions: kept}}
+  end
+
+  # Sessions exline has render data for. A dead one is dropped from the board
+  # and from the tracker — waiting out the 6 h prune would keep a session the
+  # user already quit on screen for hours.
+  defp tracked_rows(sessions, reports, liveness, now) do
+    gone_after = Exline.Board.State.thresholds().gone_after
+
+    Enum.reduce(sessions, {[], %{}}, fn {session_id, entry}, {rows, kept} ->
+      report = reports[session_id]
+      render_age = now - entry.board.last_render_at
+
+      # Renders fresher than the gone threshold outrank the verdict: the session
+      # was there moments ago, so the process check must have raced it.
+      if liveness[session_id] == :dead and render_age >= gone_after do
+        {rows, kept}
+      else
+        row = tracked_row(session_id, entry, report, liveness[session_id], now, render_age)
+        {[row | rows], Map.put(kept, session_id, entry)}
+      end
+    end)
+  end
+
+  defp tracked_row(session_id, entry, report, live, now, render_age) do
+    # A verified-alive process settles liveness, so the file's status stands
+    # however long the pane has been parked.
+    report = if report && live == :alive, do: Map.put(report, :alive, true), else: report
+    {status, reason} = Exline.Board.State.classify(entry.board, now, report)
+
+    %{
+      session_id: session_id,
+      name: entry.display[:name],
+      cwd: entry.display[:cwd],
+      model: entry.display[:model],
+      status: status,
+      reason: reason,
+      since_s: Exline.Board.State.since(entry.board, status, now, report),
+      context_pct: entry.pct,
+      last_render_age_s: render_age
+    }
+  end
+
+  # Live sessions exline has no render data for — never seen, or parked long
+  # enough to have been pruned. Everything but the file's own fields is unknown.
+  defp registry_rows(sessions, reports, liveness) do
+    for {session_id, report} <- reports,
+        liveness[session_id] == :alive,
+        not Map.has_key?(sessions, session_id) do
+      {status, reason} = Exline.Board.State.from_report(report)
+
+      %{
+        session_id: session_id,
+        name: report.name,
+        cwd: report.cwd,
+        model: nil,
+        status: status,
+        reason: reason <> " — no statusline feed",
+        since_s: report.age_s || 0,
+        context_pct: nil,
+        last_render_age_s: nil
+      }
+    end
   end
 
   # An entry may be created by a control message or hook before the first

@@ -62,6 +62,9 @@
     margin: 2px 0; border-radius: 10px; padding: 5px 11px;
     overflow: hidden;
   }
+  /* open but not rendering: a hidden or parked pane. Dimmer than a live row,
+     brighter than stale/gone, which follow and so win when both apply. */
+  .row.parked { opacity: .7; }
   .row.s-stale, .row.s-gone { opacity: .45; }
   .top { display: flex; align-items: baseline; gap: 8px; }
   .name {
@@ -118,6 +121,9 @@ var FETCH_TIMEOUT_MS = 2500;
 /* iOS freezes a backgrounded page's timers; a tick this far apart means the
    page was suspended, not that anything went wrong out on the network */
 var SUSPEND_GAP_MS = POLL_MS * 3;
+/* renders arrive ~1/s from a visible pane, so a gap this long means nobody is
+   looking at that session right now */
+var PARKED_S = 5;
 var LABEL = { working: 'Working', attention: 'Needs you', idle: 'Ready', stale: 'Stale', gone: 'Gone' };
 
 function fmtAge(s) {
@@ -162,7 +168,10 @@ function render(sessions) {
         '</span><span class="sep">·</span>';
     }
     var title = s.name ? esc(s.name) : '<span class="noname">&mdash;</span>';
-    return '<div class="row c-' + s.status + ' s-' + s.status + '">' +
+    /* no recent statusline render: the session is open but its pane is hidden
+       or parked. Null means no render feed at all (registry-only row). */
+    var parked = (s.last_render_age_s == null || s.last_render_age_s > PARKED_S) ? ' parked' : '';
+    return '<div class="row c-' + s.status + ' s-' + s.status + parked + '">' +
       '<div class="top"><span class="name">' + title + '</span>' +
       '<span class="age">' + fmtAge(s.since_s) + '</span></div>' +
       '<div class="line2">' + lead +

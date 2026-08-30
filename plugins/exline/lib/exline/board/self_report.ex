@@ -9,10 +9,16 @@ defmodule Exline.Board.SelfReport do
   itself, so it beats anything `Exline.Board.State` can infer from the outside:
   no hook has to fire, and an Esc interrupt shows up at once.
 
+  This directory is also the board's *roster*: a file is a session Claude Code
+  knows about, whether or not exline ever saw a statusline render from it.
+
   The file is written only when the status changes, never as a heartbeat, so a
-  killed session leaves its file behind indefinitely. These reports therefore
-  say only *what* a session is doing, never *whether* it is still there —
-  liveness stays with render age in `Exline.Board.State`.
+  killed session leaves its file behind indefinitely. What makes that survivable
+  is the process identity each file carries — `pid`, `procStart` (the process's
+  start time, which distinguishes a live session from a recycled pid) and
+  `pidDomain` — so `Exline.Board.Liveness` can ask the OS whether the writer is
+  still running. A file whose process is gone means the session quit; render age
+  only has to decide liveness for sessions whose identity cannot be checked.
 
   The format is a private contract (peerProtocol 1). Anything unexpected —
   unreadable file, invalid JSON, missing `sessionId`, an unknown status word —
@@ -28,8 +34,10 @@ defmodule Exline.Board.SelfReport do
 
   @doc """
   Every usable report in `dir`, as `session_id => %{status:, age_s:,
-  waiting_for:}`. `age_s` is how long ago the status was last written, or `nil`
-  when the file carries no usable timestamp.
+  waiting_for:, pid:, proc_start:, pid_domain:, name:, cwd:}`. `age_s` is how
+  long ago the status was last written, or `nil` when the file carries no usable
+  timestamp; the process-identity and display fields are `nil` when the file
+  omits them or types them unexpectedly.
 
   A missing or unreadable directory yields `%{}`, as does a directory holding
   nothing usable. Only `*.json` entries are read, non-recursively — the `.key`
@@ -69,7 +77,12 @@ defmodule Exline.Board.SelfReport do
     report = %{
       status: kind,
       age_s: written_at && max(div(now_ms - written_at, 1000), 0),
-      waiting_for: waiting_for(data)
+      waiting_for: waiting_for(data),
+      pid: integer(data["pid"]),
+      proc_start: text(data["procStart"]),
+      pid_domain: text(data["pidDomain"]),
+      name: text(data["name"]),
+      cwd: text(data["cwd"])
     }
 
     {session_id, written_at || 0, report}
@@ -77,6 +90,12 @@ defmodule Exline.Board.SelfReport do
 
   defp waiting_for(%{"waitingFor" => text}) when is_binary(text) and text != "", do: text
   defp waiting_for(_data), do: nil
+
+  defp integer(value) when is_integer(value), do: value
+  defp integer(_other), do: nil
+
+  defp text(value) when is_binary(value) and value != "", do: value
+  defp text(_other), do: nil
 
   defp keep_newest({session_id, written_at, report}, acc) do
     case acc[session_id] do

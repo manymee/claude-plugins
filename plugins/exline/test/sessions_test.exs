@@ -242,25 +242,28 @@ defmodule Exline.SessionsTest do
   end
 
   describe "self-reported status on the board" do
-    setup do
+    setup do: %{dir: session_dir()}
+
+    defp session_dir do
       dir = Path.join(System.tmp_dir!(), "exline-board-sr-#{System.unique_integer([:positive])}")
       File.mkdir_p!(dir)
       on_exit(fn -> File.rm_rf(dir) end)
-      %{dir: dir}
+      dir
     end
 
     defp board_row(sessions, session_id),
       do: sessions |> Sessions.board() |> Enum.find(&(&1.session_id == session_id))
 
-    defp write_report(dir, session_id, status, age_ms) do
-      File.write!(
-        Path.join(dir, "4242.json"),
-        JSON.encode!(%{
+    defp write_report(dir, session_id, status, age_ms, extra \\ %{}) do
+      fields =
+        %{
           "sessionId" => session_id,
           "status" => status,
           "statusUpdatedAt" => System.system_time(:millisecond) - age_ms
-        })
-      )
+        }
+        |> Map.merge(Map.new(extra, fn {key, value} -> {to_string(key), value} end))
+
+      File.write!(Path.join(dir, "#{extra[:pid] || 4242}.json"), JSON.encode!(fields))
     end
 
     test "a matching status file decides the row and dates it", ctx do
@@ -289,6 +292,106 @@ defmodule Exline.SessionsTest do
       Sessions.hook_event(sessions, @session, :user_prompt_submit)
 
       assert %{status: :working, reason: "turn open — " <> _} = board_row(sessions, @session)
+    end
+  end
+
+  describe "board membership from the session registry" do
+    setup do
+      clock = clock()
+      %{dir: session_dir(), clock: clock}
+    end
+
+    # Stands in for the ps check, so no test forks a process.
+    defp verdicts(by_session),
+      do: fn reports ->
+        Map.new(reports, fn {id, _report} -> {id, Map.get(by_session, id, :unverifiable)} end)
+      end
+
+    defp start_board(ctx, by_session),
+      do:
+        start_sessions(
+          self_report_dir: ctx.dir,
+          now: ctx.clock.now,
+          liveness: verdicts(by_session)
+        )
+
+    test "a session whose process is gone leaves the board and the tracker", ctx do
+      sessions = start_board(ctx, %{@session => :dead})
+      Sessions.update(sessions, @session, 10, %{api_ms: 1000})
+      write_report(ctx.dir, @session, "idle", 0)
+      assert board_row(sessions, @session), "still rendering — too early to drop it"
+
+      advance(ctx.clock, :timer.seconds(20))
+
+      refute board_row(sessions, @session)
+      # Dropped from state too: waiting out the 6 h prune would leave a quit
+      # session on the board for hours, which is the bug this replaces.
+      assert Sessions.status(sessions, @session) == %{enabled: true, pct: nil}
+    end
+
+    test "renders fresher than the gone threshold outrank a dead verdict", ctx do
+      # Guards the race where ps runs between two renders of a session that is
+      # very much alive.
+      sessions = start_board(ctx, %{@session => :dead})
+      Sessions.update(sessions, @session, 10, %{api_ms: 1000})
+      settle(sessions, @session)
+      write_report(ctx.dir, @session, "busy", 0)
+
+      advance(ctx.clock, :timer.seconds(2))
+      assert %{status: :working} = board_row(sessions, @session)
+    end
+
+    test "a live session parked out of sight keeps its file status", ctx do
+      sessions = start_board(ctx, %{@session => :alive})
+      Sessions.update(sessions, @session, 10, %{api_ms: 1000})
+      settle(sessions, @session)
+      write_report(ctx.dir, @session, "idle", 0)
+
+      advance(ctx.clock, :timer.seconds(60))
+
+      # The pane is hidden, so no renders arrive — but the process is there.
+      assert %{status: :idle, last_render_age_s: 60} = board_row(sessions, @session)
+    end
+
+    test "a live session exline has never rendered still gets a row", ctx do
+      sessions = start_board(ctx, %{"unseen" => :alive})
+
+      write_report(ctx.dir, "unseen", "waiting", 7_000, %{
+        name: "parked one",
+        cwd: "/tmp/proj",
+        pid: 4243
+      })
+
+      assert %{
+               name: "parked one",
+               cwd: "/tmp/proj",
+               status: :attention,
+               since_s: 7,
+               context_pct: nil,
+               model: nil,
+               last_render_age_s: nil,
+               reason: reason
+             } = board_row(sessions, "unseen")
+
+      assert reason =~ "no statusline feed"
+    end
+
+    test "a registry file with no live process is not a row", ctx do
+      sessions = start_board(ctx, %{"quit" => :dead, "unknown" => :unverifiable})
+      write_report(ctx.dir, "quit", "idle", 0, %{pid: 4243})
+      write_report(ctx.dir, "unknown", "idle", 0, %{pid: 4244})
+
+      assert Sessions.board(sessions) == []
+    end
+
+    test "an unverifiable process leaves the session on render age", ctx do
+      sessions = start_board(ctx, %{})
+      Sessions.update(sessions, @session, 10, %{api_ms: 1000})
+      settle(sessions, @session)
+      write_report(ctx.dir, @session, "busy", 0)
+
+      advance(ctx.clock, :timer.seconds(20))
+      assert %{status: :gone} = board_row(sessions, @session)
     end
   end
 

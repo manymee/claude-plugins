@@ -15,7 +15,8 @@ defmodule Exline.Board.State do
     * UserPromptSubmit hook (opens the turn)
     * Notification hook — "needs permission" vs "waiting for input" (fires
       after ~60s idle), distinguished by message content
-    * renders stopping entirely — session closed (stale, then gone)
+    * renders stopping entirely — session closed (stale, then gone), but only
+      for a session whose process could not be checked (see below)
     * the session's own status file, read by `Exline.Board.SelfReport` and
       passed to `classify/3` — what the session says about itself, which
       outranks everything the signals above can only guess at
@@ -25,6 +26,14 @@ defmodule Exline.Board.State do
   parenthetical note whenever the two disagree. Sessions without one — an older
   CLI, or a file that failed to parse — run on the heuristic alone.
 
+  Liveness is not this module's to decide when it can be established outright.
+  `Exline.Board.Liveness` asks the OS whether the process that wrote the status
+  file is still running; a report carrying `alive: true` therefore skips stale
+  and gone entirely, however long ago the session last rendered — a session
+  parked in a hidden pane is open, not gone. Stale and gone are left to sessions
+  whose process cannot be checked, and `Exline.Sessions` drops a confirmed-dead
+  session from the board rather than classifying it.
+
   The self-report closes three of the heuristic's blind spots outright while a
   session file matches: an Esc interrupt (no hook fires, so the turn used to
   read working until the idle-60s notification), a permission approval (no hook
@@ -33,8 +42,8 @@ defmodule Exline.Board.State do
   guess). What stays (see proto/board_state.exs to experience the heuristic):
 
     * status files are never heartbeated — a killed session leaves one behind
-      forever, so liveness stays with render age and stale/gone keep top
-      precedence over any report
+      forever, so a report alone can never keep a session alive; only a checked
+      process (`alive: true`) outranks stale and gone
     * the file format is a private contract (peerProtocol 1); an absent file,
       an unparseable one or an unknown status word falls back to the heuristic
     * sessions on a CLI older than the status files write none at all
@@ -121,14 +130,20 @@ defmodule Exline.Board.State do
   | :gone.
 
   `report` is this session's entry from `Exline.Board.SelfReport.scan/2`, or
-  `nil` when it has none. Render age decides first either way — a status file
-  outlives the session that wrote it, so it can never keep a dead session
-  alive.
+  `nil` when it has none. Render age decides first — a status file outlives the
+  session that wrote it, so it can never keep a dead session alive on its own.
+
+  A report marked `alive: true` is the exception: its writing process has been
+  found running (`Exline.Board.Liveness`), which settles liveness better than
+  render age can, so stale and gone are skipped and the file decides.
   """
   def classify(s, now, report \\ nil) do
     render_age = now - s.last_render_at
 
     cond do
+      is_map(report) and report[:alive] ->
+        self_reported(s, now, report)
+
       render_age >= @gone_after ->
         {:gone, "no renders for #{render_age}s — session closed"}
 
@@ -142,6 +157,13 @@ defmodule Exline.Board.State do
         heuristic(s, now)
     end
   end
+
+  @doc """
+  Status and reason for a session known only from its status file — it is
+  running (verified), but exline has no render feed for it, so there is no
+  heuristic to cross-check against.
+  """
+  def from_report(report), do: {self_status(report.status), self_reason(report)}
 
   defp self_reported(s, now, report) do
     status = self_status(report.status)

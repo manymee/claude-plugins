@@ -71,22 +71,29 @@ HTTP server does not start:
 
 `GET /` serves the page, `GET /board.json` the roster it polls (every 3 s).
 
-A session's status comes first from the status file Claude Code writes for
-itself (`~/.claude/sessions/<pid>.json`, rooted at `CLAUDE_CONFIG_DIR` when
-set): busy / idle / waiting, straight from the session, so an Esc interrupt or
-a permission approval shows up without waiting for a hook. Sessions with no
-usable file — older CLI, unparseable — fall back to a heuristic over two feeds:
-statusline renders carry name, cwd, model, context % and cumulative API time,
-while hooks (`UserPromptSubmit`, `PostToolBatch`, `Stop`, `Notification`) track
-whether a turn is open and whether Claude is waiting on a permission prompt.
-When the two disagree the row quotes the heuristic's verdict in parentheses.
+Who is on the board comes from Claude Code's own session registry — the status
+file each session writes for itself (`~/.claude/sessions/<pid>.json`, rooted at
+`CLAUDE_CONFIG_DIR` when set). The file names the process that wrote it, so
+exline asks the OS whether that process is still running: a session that quit
+drops off the board immediately, and a live one is listed even if exline has
+never seen a statusline render from it.
 
-Status files are written only on a transition, never as a heartbeat, so
-liveness stays with renders: sessions that stop rendering dim after a few
-seconds (`stale`, then `gone`) whatever their file last said, but stay listed
-until the 6 h prune, so parked tmux sessions remain visible. The classification
-rules live in `Exline.Board.State`; an interactive workbench walks the
-heuristic through canned scenarios:
+The same file gives the status — busy / idle / waiting, straight from the
+session, so an Esc interrupt or a permission approval shows up without waiting
+for a hook. Sessions with no usable file — older CLI, unparseable — fall back to
+a heuristic over two feeds: statusline renders carry name, cwd, model, context %
+and cumulative API time, while hooks (`UserPromptSubmit`, `PostToolBatch`,
+`Stop`, `Notification`) track whether a turn is open and whether Claude is
+waiting on a permission prompt. When the two disagree the row quotes the
+heuristic's verdict in parentheses.
+
+Render age no longer decides liveness for a session whose process could be
+checked: a pane parked out of sight stops rendering but is still open, so it
+keeps its status and only dims. `stale` and `gone` are left for sessions whose
+process cannot be checked (a foreign `pidDomain`, a missing pid, `ps` failing),
+which stay listed until the 6 h prune. The classification rules live in
+`Exline.Board.State` and the process check in `Exline.Board.Liveness`; an
+interactive workbench walks the heuristic through canned scenarios:
 
 ```sh
 mix run --no-start proto/board_state.exs

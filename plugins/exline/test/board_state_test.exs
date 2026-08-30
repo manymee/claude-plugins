@@ -170,12 +170,31 @@ defmodule Exline.Board.StateTest do
                State.classify(s, 1, report(:busy))
     end
 
-    test "a stale or gone session stays so — the file outlives its writer" do
+    test "an unverified session still goes stale then gone — the file outlives its writer" do
       # Status files are not heartbeated, so a killed session's last "busy"
-      # must never resurrect it on the board.
+      # must never resurrect it on the board while nothing has confirmed its
+      # process is running.
       s = fresh(0)
       assert {:stale, _} = State.classify(s, 3, report(:busy))
       assert {:gone, _} = State.classify(s, 10, report(:busy))
+    end
+
+    test "a verified-alive session never goes stale or gone, however long it is parked" do
+      # A hidden tmux pane renders nothing, but the process is there; calling it
+      # gone is exactly the lie this flag exists to stop.
+      s = fresh(0)
+      alive = Map.put(report(:idle), :alive, true)
+
+      assert {:idle, "self-reported idle" <> _} = State.classify(s, 3, alive)
+      assert {:idle, "self-reported idle" <> _} = State.classify(s, 10, alive)
+      assert {:idle, "self-reported idle" <> _} = State.classify(s, 10_000, alive)
+    end
+
+    test "from_report classifies a session known only by its file" do
+      assert State.from_report(report(:busy)) == {:working, "self-reported busy"}
+
+      assert State.from_report(report(:waiting, waiting_for: "permission: Bash")) ==
+               {:attention, "self-reported waiting: permission: Bash"}
     end
 
     test "since anchors to the session's own status timestamp" do
