@@ -52,7 +52,10 @@ defmodule Exline.Sessions do
   wherever it can: a session whose registry file names a process that is no
   longer running has quit, so it leaves the board — and this tracker — at once,
   and a running session appears even if no statusline render was ever seen from
-  it. Only sessions the registry cannot speak for fall back to render age.
+  it. Only sessions the registry cannot speak for fall back to render age, and
+  even those are listed only while something vouches for them: a `gone` session
+  is left off the roster (though still tracked, so it reappears with its next
+  render) — the board shows open sessions, not a history.
   """
   def board(server \\ __MODULE__), do: GenServer.call(server, :board)
 
@@ -200,7 +203,14 @@ defmodule Exline.Sessions do
         {rows, kept}
       else
         row = tracked_row(session_id, entry, report, liveness[session_id], now, render_age)
-        {[row | rows], Map.put(kept, session_id, entry)}
+
+        # The board shows open sessions. A gone row is one nothing vouches for —
+        # no renders past the threshold, no live process behind a registry file —
+        # so it is not listed; the entry stays tracked, and the row returns the
+        # moment a render does. Stale (the shorter dip) stays visible so a brief
+        # render hiccup dims rather than flickers out.
+        rows = if row.status == :gone, do: rows, else: [row | rows]
+        {rows, Map.put(kept, session_id, entry)}
       end
     end)
   end

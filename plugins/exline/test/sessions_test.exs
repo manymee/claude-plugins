@@ -390,8 +390,21 @@ defmodule Exline.SessionsTest do
       settle(sessions, @session)
       write_report(ctx.dir, @session, "busy", 0)
 
+      advance(ctx.clock, :timer.seconds(5))
+      assert %{status: :stale} = board_row(sessions, @session)
+    end
+
+    test "a gone session is not listed but returns when renders resume", ctx do
+      sessions = start_board(ctx, %{})
+      Sessions.update(sessions, @session, 10, %{api_ms: 1000})
+      settle(sessions, @session)
+
       advance(ctx.clock, :timer.seconds(20))
-      assert %{status: :gone} = board_row(sessions, @session)
+      assert board_row(sessions, @session) == nil
+
+      Sessions.update(sessions, @session, 10, %{api_ms: 1000})
+      settle(sessions, @session)
+      refute board_row(sessions, @session) == nil
     end
   end
 

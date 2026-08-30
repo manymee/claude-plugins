@@ -90,8 +90,10 @@ heuristic's verdict in parentheses.
 Render age no longer decides liveness for a session whose process could be
 checked: a pane parked out of sight stops rendering but is still open, so it
 keeps its status and only dims. `stale` and `gone` are left for sessions whose
-process cannot be checked (a foreign `pidDomain`, a missing pid, `ps` failing),
-which stay listed until the 6 h prune. The classification rules live in
+process cannot be checked (a foreign `pidDomain`, a missing pid, `ps` failing).
+The board lists open sessions, so a `gone` row — one nothing vouches for — is
+not shown; a brief render dip shows as `stale` for a few seconds, and a hidden
+row comes back the moment a render does. The classification rules live in
 `Exline.Board.State` and the process check in `Exline.Board.Liveness`; an
 interactive workbench walks the heuristic through canned scenarios:
 
