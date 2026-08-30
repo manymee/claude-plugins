@@ -241,6 +241,57 @@ defmodule Exline.SessionsTest do
     end
   end
 
+  describe "self-reported status on the board" do
+    setup do
+      dir = Path.join(System.tmp_dir!(), "exline-board-sr-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(dir)
+      on_exit(fn -> File.rm_rf(dir) end)
+      %{dir: dir}
+    end
+
+    defp board_row(sessions, session_id),
+      do: sessions |> Sessions.board() |> Enum.find(&(&1.session_id == session_id))
+
+    defp write_report(dir, session_id, status, age_ms) do
+      File.write!(
+        Path.join(dir, "4242.json"),
+        JSON.encode!(%{
+          "sessionId" => session_id,
+          "status" => status,
+          "statusUpdatedAt" => System.system_time(:millisecond) - age_ms
+        })
+      )
+    end
+
+    test "a matching status file decides the row and dates it", ctx do
+      sessions = start_sessions(self_report_dir: ctx.dir)
+      Sessions.update(sessions, @session, 10, %{api_ms: 1000})
+      assert %{status: :idle} = board_row(sessions, @session)
+
+      write_report(ctx.dir, @session, "busy", 5_000)
+
+      assert %{status: :working, reason: "self-reported busy" <> _, since_s: 5} =
+               board_row(sessions, @session)
+    end
+
+    test "a file for another session leaves this row on the heuristic", ctx do
+      sessions = start_sessions(self_report_dir: ctx.dir)
+      Sessions.update(sessions, @session, 10, %{api_ms: 1000})
+      Sessions.hook_event(sessions, @session, :user_prompt_submit)
+      write_report(ctx.dir, "some-other-session", "idle", 0)
+
+      assert %{status: :working, reason: "turn open — " <> _} = board_row(sessions, @session)
+    end
+
+    test "an empty status dir leaves every row on the heuristic", ctx do
+      sessions = start_sessions(self_report_dir: ctx.dir)
+      Sessions.update(sessions, @session, 10, %{api_ms: 1000})
+      Sessions.hook_event(sessions, @session, :user_prompt_submit)
+
+      assert %{status: :working, reason: "turn open — " <> _} = board_row(sessions, @session)
+    end
+  end
+
   describe "stale session pruning" do
     defp clock do
       {:ok, clock} = Agent.start_link(fn -> 0 end)

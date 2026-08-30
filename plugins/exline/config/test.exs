@@ -6,3 +6,8 @@ config :exline, start_listener: false
 config :exline,
   captures_dir: "tmp/test-captures",
   crash_dir: "tmp/test-crashes"
+
+# The board must never read the developer's own ~/.claude/sessions: a real
+# session reporting "busy" under an id a test happens to use would flake it.
+# Tests that want self-reports pass :self_report_dir explicitly.
+config :exline, self_report_dir: "tmp/test-no-self-reports"

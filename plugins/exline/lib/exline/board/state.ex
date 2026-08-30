@@ -16,17 +16,31 @@ defmodule Exline.Board.State do
     * Notification hook — "needs permission" vs "waiting for input" (fires
       after ~60s idle), distinguished by message content
     * renders stopping entirely — session closed (stale, then gone)
+    * the session's own status file, read by `Exline.Board.SelfReport` and
+      passed to `classify/3` — what the session says about itself, which
+      outranks everything the signals above can only guess at
 
-  Known blind spots (accepted, see proto/board_state.exs to experience them):
+  The hook-and-render signals are a heuristic; the self-report is not, so a
+  session that has one is classified from it and the heuristic is demoted to a
+  parenthetical note whenever the two disagree. Sessions without one — an older
+  CLI, or a file that failed to parse — run on the heuristic alone.
 
-    * during a long-running tool the api counter freezes → the open turn
-      carries the working classification, with a degrading reason note
-    * Esc interrupt fires no hook → misclassified working until the idle-60s
-      notification closes the turn
-    * permission approval fires no hook → attention persists until the tool
-      batch ends (a PreToolUse registration would clear it at approval time)
-    * daemon restart wipes turn state → falls back to the api-diff heuristic
-      until the next hook arrives
+  The self-report closes three of the heuristic's blind spots outright while a
+  session file matches: an Esc interrupt (no hook fires, so the turn used to
+  read working until the idle-60s notification), a permission approval (no hook
+  fires, so attention used to persist until the tool batch ended), and a daemon
+  restart (turn state wiped, so classification used to fall back to the api-diff
+  guess). What stays (see proto/board_state.exs to experience the heuristic):
+
+    * status files are never heartbeated — a killed session leaves one behind
+      forever, so liveness stays with render age and stale/gone keep top
+      precedence over any report
+    * the file format is a private contract (peerProtocol 1); an absent file,
+      an unparseable one or an unknown status word falls back to the heuristic
+    * sessions on a CLI older than the status files write none at all
+    * on the heuristic, during a long-running tool the api counter freezes →
+      the open turn carries the working classification, with a degrading reason
+      note
 
   The interactive workbench for these rules is `proto/board_state.exs`
   (`mix run --no-start proto/board_state.exs`) — it drives this module
@@ -102,8 +116,16 @@ defmodule Exline.Board.State do
 
   ## Classification
 
-  @doc "Returns `{status, reason}`; status is :working | :attention | :idle | :stale | :gone."
-  def classify(s, now) do
+  @doc """
+  Returns `{status, reason}`; status is :working | :attention | :idle | :stale
+  | :gone.
+
+  `report` is this session's entry from `Exline.Board.SelfReport.scan/2`, or
+  `nil` when it has none. Render age decides first either way — a status file
+  outlives the session that wrote it, so it can never keep a dead session
+  alive.
+  """
+  def classify(s, now, report \\ nil) do
     render_age = now - s.last_render_at
 
     cond do
@@ -113,6 +135,35 @@ defmodule Exline.Board.State do
       render_age >= @stale_after ->
         {:stale, "no renders for #{render_age}s"}
 
+      is_map(report) ->
+        self_reported(s, now, report)
+
+      true ->
+        heuristic(s, now)
+    end
+  end
+
+  defp self_reported(s, now, report) do
+    status = self_status(report.status)
+    {guess, guess_reason} = heuristic(s, now)
+
+    note =
+      if guess == status, do: "", else: " (heuristic: #{guess} — #{guess_reason})"
+
+    {status, self_reason(report) <> note}
+  end
+
+  defp self_status(:busy), do: :working
+  defp self_status(:waiting), do: :attention
+  defp self_status(:idle), do: :idle
+
+  defp self_reason(%{status: :waiting, waiting_for: what}) when is_binary(what),
+    do: "self-reported waiting: #{what}"
+
+  defp self_reason(%{status: status}), do: "self-reported #{status}"
+
+  defp heuristic(s, now) do
+    cond do
       s.pending_permission ->
         {:attention, "permission prompt unanswered for #{now - s.pending_permission}s"}
 
@@ -134,20 +185,29 @@ defmodule Exline.Board.State do
   end
 
   @doc """
-  Seconds the session has been in `status` (as returned by `classify/2`),
+  Seconds the session has been in `status` (as returned by `classify/3`),
   anchored to the event that put it there.
-  """
-  def since(s, status, now) do
-    anchor =
-      case status do
-        :working -> s.turn_open_since || s.api_advanced_at || s.created_at
-        :attention -> s.pending_permission
-        :idle -> latest_closer(s) || s.created_at
-        _stale_or_gone -> s.last_render_at
-      end
 
-    now - (anchor || now)
+  With a `report`, the session's own status timestamp is the anchor — it knows
+  when it changed state better than any hook we happened to see. Stale and gone
+  are render-age states, so they stay anchored to the last render either way.
+  """
+  def since(s, status, now, report \\ nil) do
+    now - (anchor(s, status, now, report) || now)
   end
+
+  # Stale and gone are render-age states; nothing the session last said about
+  # itself can date them.
+  defp anchor(s, status, _now, _report) when status not in [:working, :attention, :idle],
+    do: s.last_render_at
+
+  defp anchor(_s, _status, now, %{age_s: age_s}) when is_integer(age_s), do: now - age_s
+
+  defp anchor(s, :working, _now, _report),
+    do: s.turn_open_since || s.api_advanced_at || s.created_at
+
+  defp anchor(s, :attention, _now, _report), do: s.pending_permission
+  defp anchor(s, :idle, _now, _report), do: latest_closer(s) || s.created_at
 
   defp latest_closer(s) do
     case Enum.reject([s.hooks[:stop], s.hooks[:notif_idle]], &is_nil/1) do

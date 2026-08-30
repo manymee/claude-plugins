@@ -115,4 +115,82 @@ defmodule Exline.Board.StateTest do
       assert State.since(s, :idle, 4) == 4
     end
   end
+
+  describe "self-reported status" do
+    defp report(status, opts \\ []),
+      do: %{
+        status: status,
+        age_s: Keyword.get(opts, :age_s),
+        waiting_for: Keyword.get(opts, :waiting_for)
+      }
+
+    test "busy overrides the heuristic's idle (api advancing after a Stop)" do
+      # The captured bug: Stop closed the turn, then the api kept advancing, so
+      # the heuristic called a working session idle.
+      s = fresh(0) |> State.stop(1) |> State.render(2000, 2)
+      assert {:idle, _} = State.classify(s, 2)
+
+      assert {:working, "self-reported busy (heuristic: idle — turn closed — but api" <> _} =
+               State.classify(s, 2, report(:busy))
+    end
+
+    test "idle overrides an open turn (Esc interrupt fires no hook)" do
+      s = fresh(0) |> State.user_prompt_submit(1) |> State.render(1000, 2)
+      assert {:working, _} = State.classify(s, 2)
+
+      assert {:idle, "self-reported idle (heuristic: working — turn open" <> _} =
+               State.classify(s, 2, report(:idle))
+    end
+
+    test "waiting reads as attention and names what is being waited on" do
+      s = fresh(0) |> State.user_prompt_submit(1)
+
+      assert {:attention, reason} =
+               State.classify(s, 1, report(:waiting, waiting_for: "permission: Bash(rm)"))
+
+      assert reason =~ "self-reported waiting: permission: Bash(rm)"
+    end
+
+    test "waiting without a reason still classifies, just without the detail" do
+      s = fresh(0) |> State.user_prompt_submit(1)
+      assert {:attention, reason} = State.classify(s, 1, report(:waiting))
+      assert reason =~ "self-reported waiting ("
+      refute reason =~ "waiting:"
+    end
+
+    test "the heuristic note appears only when the two disagree" do
+      # Agreement: an open turn and a busy report both say working.
+      s = fresh(0) |> State.user_prompt_submit(1)
+      assert {:working, "self-reported busy"} = State.classify(s, 1, report(:busy))
+
+      # Disagreement: the same report against a closed turn.
+      s = State.stop(s, 1)
+
+      assert {:working, "self-reported busy (heuristic: idle — turn closed by Stop)"} =
+               State.classify(s, 1, report(:busy))
+    end
+
+    test "a stale or gone session stays so — the file outlives its writer" do
+      # Status files are not heartbeated, so a killed session's last "busy"
+      # must never resurrect it on the board.
+      s = fresh(0)
+      assert {:stale, _} = State.classify(s, 3, report(:busy))
+      assert {:gone, _} = State.classify(s, 10, report(:busy))
+    end
+
+    test "since anchors to the session's own status timestamp" do
+      s = fresh(0) |> State.user_prompt_submit(1)
+      assert State.since(s, :working, 100, report(:busy, age_s: 12)) == 12
+    end
+
+    test "since falls back to the hook anchors when the report has no timestamp" do
+      s = fresh(0) |> State.user_prompt_submit(3)
+      assert State.since(s, :working, 10, report(:busy)) == 7
+    end
+
+    test "since keeps stale anchored to the last render, not the report" do
+      s = fresh(0)
+      assert State.since(s, :stale, 10, report(:busy, age_s: 2)) == 10
+    end
+  end
 end

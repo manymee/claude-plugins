@@ -82,6 +82,10 @@ defmodule Exline.Sessions do
        thresholds: Enum.sort_by(thresholds, & &1.percent),
        repeat_every: Keyword.get(opts, :repeat_every, Exline.SessionConfig.repeat_every()),
        now: Keyword.get(opts, :now, fn -> System.monotonic_time(:millisecond) end),
+       # nil resolves to Exline.Board.SelfReport.default_dir() per board call,
+       # so CLAUDE_CONFIG_DIR is honoured even if it changes under the daemon.
+       self_report_dir:
+         Keyword.get(opts, :self_report_dir, Application.get_env(:exline, :self_report_dir)),
        sessions: %{}
      }}
   end
@@ -157,11 +161,15 @@ defmodule Exline.Sessions do
 
   def handle_call(:board, _from, state) do
     now = seconds(state.now.())
+    # One directory scan for the whole roster, not one per session.
+    dir = state.self_report_dir || Exline.Board.SelfReport.default_dir()
+    reports = Exline.Board.SelfReport.scan(dir)
 
     rows =
       state.sessions
       |> Enum.map(fn {session_id, entry} ->
-        {status, reason} = Exline.Board.State.classify(entry.board, now)
+        report = reports[session_id]
+        {status, reason} = Exline.Board.State.classify(entry.board, now, report)
 
         %{
           session_id: session_id,
@@ -170,7 +178,7 @@ defmodule Exline.Sessions do
           model: entry.display[:model],
           status: status,
           reason: reason,
-          since_s: Exline.Board.State.since(entry.board, status, now),
+          since_s: Exline.Board.State.since(entry.board, status, now, report),
           context_pct: entry.pct,
           last_render_age_s: now - entry.board.last_render_at
         }
