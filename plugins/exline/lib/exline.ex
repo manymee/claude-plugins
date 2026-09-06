@@ -159,7 +159,13 @@ defmodule Exline do
         # directory without git (basename only) instead of crashing.
         g =
           git_fetch.(cwd) ||
-            %{root: Path.basename(cwd), worktree: nil, branch: nil, status: nil, ahead_behind: nil}
+            %{
+              root: Path.basename(cwd),
+              worktree: nil,
+              branch: nil,
+              status: nil,
+              ahead_behind: nil
+            }
 
         [
           seg(g.root, Style.bold(), color?),
