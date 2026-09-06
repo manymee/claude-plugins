@@ -16,6 +16,7 @@ defmodule Exline.Application do
         {Task.Supervisor, name: Exline.ConnSupervisor},
         {Task.Supervisor, name: Exline.GitTaskSupervisor},
         Exline.GitCache,
+        Exline.Board.LivenessCache,
         Exline.Sessions
       ] ++
         if(@start_listener, do: [Exline.Listener], else: []) ++

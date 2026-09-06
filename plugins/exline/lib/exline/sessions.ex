@@ -95,8 +95,9 @@ defmodule Exline.Sessions do
        # so CLAUDE_CONFIG_DIR is honoured even if it changes under the daemon.
        self_report_dir:
          Keyword.get(opts, :self_report_dir, Application.get_env(:exline, :self_report_dir)),
-       # Injectable so tests decide liveness without forking ps.
-       liveness: Keyword.get(opts, :liveness, &Exline.Board.Liveness.check/1),
+       # Named capture, not a pid: the cache may restart under us. Injectable so
+       # tests decide liveness without forking anything.
+       liveness: Keyword.get(opts, :liveness, &Exline.Board.LivenessCache.check/1),
        sessions: %{}
      }}
   end

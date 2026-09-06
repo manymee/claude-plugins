@@ -97,6 +97,87 @@ defmodule Exline.Board.LivenessTest do
     end
   end
 
+  describe "decide/3" do
+    test "a pid that no longer exists is dead however fresh the snapshot" do
+      # The snapshot is the part that goes stale (`Exline.Board.LivenessCache`
+      # caches it); existence is asked per board read, and it is what takes a
+      # session off the board the moment it quits.
+      starts = {:ok, %{4242 => "Sat Aug 29 18:17:48 2026"}}
+      assert Liveness.decide(report(), starts, {:ok, %{4242 => false}}) == :dead
+    end
+
+    test "a pid that exists is judged by the snapshot's start time" do
+      exists = {:ok, %{4242 => true}}
+
+      assert Liveness.decide(report(), {:ok, %{4242 => "Sat Aug 29 18:17:48 2026"}}, exists) ==
+               :alive
+
+      assert Liveness.decide(report(), {:ok, %{4242 => "Sat Aug 29 20:18:25 2026"}}, exists) ==
+               :dead
+    end
+
+    test "a pid the snapshot has never seen is unjudged, not alive" do
+      # It started after the snapshot was taken, so existence alone cannot rule
+      # out a recycled pid; the render-age heuristic decides until the refresh.
+      exists = {:ok, %{4242 => true}}
+      assert Liveness.decide(report(), {:ok, %{}}, exists) == :unverifiable
+      assert Liveness.decide(report(), :error, exists) == :unverifiable
+    end
+
+    test "an untrustworthy existence check leaves the snapshot to decide alone" do
+      starts = {:ok, %{4242 => "Sat Aug 29 18:17:48 2026"}}
+      assert Liveness.decide(report(), starts, :error) == :alive
+      assert Liveness.decide(report(), {:ok, %{}}, :error) == :dead
+    end
+
+    test "a report with no checkable pid stays unverifiable" do
+      starts = {:ok, %{4242 => "Sat Aug 29 18:17:48 2026"}}
+      assert Liveness.decide(report(%{pid: nil}), starts, {:ok, %{}}) == :unverifiable
+      assert Liveness.decide(report(%{pid_domain: "linux"}), starts, {:ok, %{}}) == :unverifiable
+    end
+  end
+
+  describe "parse_kill/2" do
+    test "a pid kill says nothing about was signalled, so it is running" do
+      assert Liveness.parse_kill("", [3331, 4242]) == {:ok, %{3331 => true, 4242 => true}}
+    end
+
+    test "only 'No such process' is death" do
+      output = "kill: 3331: No such process\n"
+      assert Liveness.parse_kill(output, [3331, 4242]) == {:ok, %{3331 => false, 4242 => true}}
+    end
+
+    test "a pid this user may not signal is running, not gone" do
+      # Only a live process can refuse a signal. Reading EPERM as death would
+      # drop every session running under another account.
+      output = "kill: 3331: Operation not permitted\n"
+      assert Liveness.parse_kill(output, [3331, 4242]) == {:ok, %{3331 => true, 4242 => true}}
+    end
+
+    test "a line naming no pid of the batch fails the whole check" do
+      # `kill` gives up on a malformed argument list without signalling anything,
+      # so its usage error must not read as "all of them are running".
+      assert Liveness.parse_kill("kill: illegal process id: abc\n", [3331]) == :error
+      assert Liveness.parse_kill("kill: 9999: No such process\n", [3331]) == :error
+      assert Liveness.parse_kill("something else entirely\n", [3331]) == :error
+    end
+  end
+
+  describe "exists/1" do
+    test "this very OS process, one owned by root, and a free pid" do
+      # The one test that runs the real `kill`: it pins the argument shape and
+      # the wording of both complaints against the OS this runs on, which is the
+      # only place they can drift.
+      pid = System.pid() |> String.to_integer()
+      free = free_pid()
+
+      # Nothing to complain about: `kill` exits 0 and says so by saying nothing.
+      assert Liveness.exists([pid]) == {:ok, %{pid => true}}
+      # Pid 1 is launchd — running, and not this user's to signal.
+      assert Liveness.exists([pid, 1, free]) == {:ok, %{pid => true, 1 => true, free => false}}
+    end
+  end
+
   describe "check/1" do
     test "an empty roster answers empty without running ps" do
       assert Liveness.check(%{}) == %{}
