@@ -11,7 +11,7 @@ v2.1.143  Opus 4.7  concise-omit  Ctx Used: 7.0%
 Session: 1.0%  3h15m  |  Weekly: 1.0%  134h45m
 ```
 
-Line 1: truncated cwd. Line 2: git — repo, worktree, branch, dirty flags, ahead/behind. Line 3: Claude Code version, model, output style, context usage. Line 4: rate-limit windows with reset countdowns.
+Line 1: the session's project folder (`$HOME` shown as `~`). Claude Code's Bash tool keeps one shell per session, so a `cd` moves its working folder; when that folder differs from the project, a `↳` marker follows the project folder: `./sub/dir` inside the project, otherwise the full path. Long paths are shortened to `.../` plus their last folders; the marker moves to its own line when the row is too narrow. Line 2: git — repo, worktree, branch, dirty flags, ahead/behind — for the shell's folder, so after a `cd` it can show a different repo than the project. Line 3: Claude Code version, model, output style, context usage. Line 4: rate-limit windows with reset countdowns.
 
 ## Architecture
 
@@ -151,6 +151,15 @@ statusline switches to the dev daemon the moment it starts (marked by a
 bold-yellow `dev` badge on line 3) and falls back to the production daemon the
 moment it stops. Edit code, run `recompile` in iex, watch the statusline.
 `EXLINE_SOCKET` overrides the socket path in any env.
+
+With the session board enabled, the dev daemon fails to start
+(`:eaddrinuse` on the board port) because production already holds that port.
+Point it at a copy of the config without `board_http_port`:
+
+```sh
+jq 'del(.board_http_port)' ~/.claude/exline.json > /tmp/exline-dev.json
+EXLINE_CONFIG=/tmp/exline-dev.json iex -S mix
+```
 
 ```sh
 mix test                              # regression harness
