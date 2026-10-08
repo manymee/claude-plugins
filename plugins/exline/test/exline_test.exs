@@ -86,95 +86,171 @@ defmodule ExlineTest do
     end
   end
 
-  describe "line 1 (cwd path)" do
-    test "is omitted when workspace.current_dir is absent" do
+  # Workspace payload whose shell has not moved: project and cwd are the same dir.
+  defp at(dir), do: at(dir, dir)
+  defp at(project, cwd), do: %{"workspace" => %{"project_dir" => project, "current_dir" => cwd}}
+
+  defp with_columns(data, columns), do: Map.put(data, "terminal", %{"columns" => columns})
+
+  # Path-row rendering with a fixed home and git unavailable, so the git group
+  # is just the cwd basename.
+  defp path_lines(data) do
+    Exline.format(data, now: @now, home: "/Users/me", git_fetch: fn _cwd -> nil end)
+    |> String.split("\n")
+  end
+
+  describe "line 1 (project path)" do
+    test "is omitted when the workspace is absent" do
       refute Exline.format(%{}, now: @now) |> String.contains?("/")
     end
 
     test "renders a shallow path verbatim" do
-      data = %{"workspace" => %{"current_dir" => "/usr/local"}}
-      [line1 | _] = Exline.format(data, now: @now) |> String.split("\n")
+      [line1 | _] = path_lines(at("/usr/local"))
       assert line1 == "/usr/local"
     end
 
     test "truncates a deep path to '.../<parent>/<leaf>'" do
-      data = %{"workspace" => %{"current_dir" => "/a/b/c/d/e"}}
-      [line1 | _] = Exline.format(data, now: @now) |> String.split("\n")
+      [line1 | _] = path_lines(at("/a/b/c/d/e"))
       assert line1 == ".../d/e"
     end
 
     # Path.split counts the leading "/" as a part, so the truncation threshold
     # of `> 3` fires once the path has two non-root segments below root.
     test "truncates at the Path.split-length-3 boundary" do
-      data = %{"workspace" => %{"current_dir" => "/usr/local/bin"}}
-      [line1 | _] = Exline.format(data, now: @now) |> String.split("\n")
+      [line1 | _] = path_lines(at("/usr/local/bin"))
       assert line1 == ".../local/bin"
     end
 
     test "keeps a single-segment path untruncated" do
-      data = %{"workspace" => %{"current_dir" => "/etc"}}
-      [line1 | _] = Exline.format(data, now: @now) |> String.split("\n")
+      [line1 | _] = path_lines(at("/etc"))
       assert line1 == "/etc"
+    end
+
+    test "shows home as '~', by whole path segment" do
+      assert hd(path_lines(at("/Users/me/dotfiles"))) == "~/dotfiles"
+      assert hd(path_lines(at("/Users/me"))) == "~"
+      assert hd(path_lines(at("/Users/meow"))) == "/Users/meow"
+    end
+
+    test "stays on the project dir after the shell cd's elsewhere" do
+      [line1 | _] = path_lines(at("/Users/me/dotfiles", "/tmp/foo"))
+      assert line1 == "~/dotfiles"
     end
   end
 
   describe "line 1 width-aware truncation (terminal.columns)" do
     test "ignores a zero width and falls back to width-blind truncation" do
-      data = %{
-        "workspace" => %{"current_dir" => "/a/b/c/d/e"},
-        "terminal" => %{"columns" => 0}
-      }
-
-      [line1 | _] = Exline.format(data, now: @now) |> String.split("\n")
+      [line1 | _] = path_lines(at("/a/b/c/d/e") |> with_columns(0))
       assert line1 == ".../d/e"
     end
 
     test "keeps a deep path verbatim when it fits the width" do
-      data = %{
-        "workspace" => %{"current_dir" => "/usr/local/bin"},
-        "terminal" => %{"columns" => 80}
-      }
-
-      # Width is ample, so the path keeps all segments (no `.../` collapse). At
-      # this width it also merges onto one row with the git group; see the
-      # dedicated merge describe block below.
-      [line1 | _] = Exline.format(data, now: @now) |> String.split("\n")
-      assert String.starts_with?(line1, "/usr/local/bin")
-      refute line1 =~ "..."
+      # Ample width also merges the git group onto the row; only the path's
+      # prefix matters here.
+      [line1 | _] = path_lines(at("/usr/local/bin") |> with_columns(80))
+      assert String.starts_with?(line1, "/usr/local/bin ")
     end
 
     test "collapses from the left, keeping as many trailing segments as fit" do
-      data = %{
-        "workspace" => %{"current_dir" => "/Users/me/my/dotfiles/custom/exline"},
-        "terminal" => %{"columns" => 21}
-      }
-
-      [line1 | _] = Exline.format(data, now: @now) |> String.split("\n")
+      [line1 | _] = path_lines(at("/opt/me/my/dotfiles/custom/exline") |> with_columns(21))
       assert line1 == ".../custom/exline"
-      assert String.length(line1) <= 20
     end
 
     test "reserves render-margin headroom below the reported width" do
       # Full path is exactly 20 chars and would fit a raw 20-col width, but CC
       # reserves columns on the right, so we still collapse to stay clear of it.
-      data = %{
-        "workspace" => %{"current_dir" => "/Users/me/projectdir"},
-        "terminal" => %{"columns" => 20}
-      }
-
-      [line1 | _] = Exline.format(data, now: @now) |> String.split("\n")
-      refute line1 == "/Users/me/projectdir"
-      assert String.length(line1) < 20
+      [line1 | _] = path_lines(at("/opt/me/projectdirxx") |> with_columns(20))
+      assert line1 == ".../projectdirxx"
     end
 
     test "floors at the leaf alone when even one segment overflows" do
-      data = %{
-        "workspace" => %{"current_dir" => "/Users/me/averylongdirectoryname"},
-        "terminal" => %{"columns" => 10}
-      }
-
-      [line1 | _] = Exline.format(data, now: @now) |> String.split("\n")
+      [line1 | _] = path_lines(at("/opt/me/averylongdirectoryname") |> with_columns(10))
       assert line1 == ".../averylongdirectoryname"
+    end
+  end
+
+  describe "cwd marker (shell moved away from the project dir)" do
+    # Wide enough that the whole path row merges onto one line.
+    defp marker_row(project, cwd) do
+      [row | _] = path_lines(at(project, cwd) |> with_columns(200))
+      row |> String.split(~r/ {3,}/) |> hd()
+    end
+
+    test "is absent when the cwd is the project dir, trailing slash or not" do
+      assert marker_row("/Users/me/dotfiles", "/Users/me/dotfiles/") == "~/dotfiles"
+    end
+
+    test "shows a subdir relative to the project" do
+      assert marker_row("/Users/me/dotfiles", "/Users/me/dotfiles/kitty/.config/kitty") ==
+               "~/dotfiles  ↳ ./kitty/.config/kitty"
+    end
+
+    test "treats a sibling sharing the name prefix as outside the project" do
+      assert marker_row("/Users/me/dotfiles", "/Users/me/dotfiles2") ==
+               "~/dotfiles  ↳ ~/dotfiles2"
+    end
+
+    test "shows a dir outside the project under home with '~'" do
+      assert marker_row("/Users/me/dotfiles", "/Users/me/code/claude-plugins") ==
+               "~/dotfiles  ↳ ~/code/claude-plugins"
+    end
+
+    test "shows a dir outside home as an absolute path" do
+      assert marker_row("/Users/me/dotfiles", "/tmp/foo") == "~/dotfiles  ↳ /tmp/foo"
+    end
+
+    test "shows home itself as '~'" do
+      assert marker_row("/Users/me/dotfiles", "/Users/me") == "~/dotfiles  ↳ ~"
+    end
+
+    test "renders with no project dir, without a leading space" do
+      data = %{"workspace" => %{"current_dir" => "/tmp/foo"}}
+
+      assert path_lines(data) |> Enum.take(2) == ["↳ /tmp/foo", "foo"]
+      assert [row | _] = path_lines(with_columns(data, 30))
+      assert row == "↳ /tmp/foo" <> String.duplicate(" ", 13) <> "foo"
+    end
+  end
+
+  describe "fitting the path row (project, cwd marker, git)" do
+    # "~/dotfiles" (10) + "  " + "↳ ./kitty/.config/kitty" (23) + gap + "kitty" (5)
+    @moved %{
+      "workspace" => %{
+        "project_dir" => "/Users/me/dotfiles",
+        "current_dir" => "/Users/me/dotfiles/kitty/.config/kitty"
+      }
+    }
+
+    test "puts all three on one row, git flush right, when wide enough" do
+      # Usable width 46 - 4 = 42: 40 chars of content + 2 pad.
+      [row | _] = path_lines(with_columns(@moved, 46))
+      assert row == "~/dotfiles  ↳ ./kitty/.config/kitty  kitty"
+    end
+
+    test "moves the marker below the project + git row when all three do not fit" do
+      # Usable width 41: one short of the three-group row.
+      assert path_lines(with_columns(@moved, 45)) |> Enum.take(2) == [
+               "~/dotfiles" <> String.duplicate(" ", 26) <> "kitty",
+               "↳ ./kitty/.config/kitty"
+             ]
+    end
+
+    test "stacks project, marker and git when even project + git does not fit" do
+      # Usable width 16: the marker's path collapses into the 14 columns after `↳ `.
+      assert path_lines(with_columns(@moved, 20)) |> Enum.take(3) ==
+               ["~/dotfiles", "↳ .../kitty", "kitty"]
+    end
+
+    test "stacks with width-blind truncation when the width is unknown" do
+      assert path_lines(@moved) |> Enum.take(3) ==
+               ["~/dotfiles", "↳ .../.config/kitty", "kitty"]
+    end
+
+    # The client finds the flush-right pad as the only run of 3+ spaces.
+    test "keeps content free of three-space runs at every width" do
+      for columns <- 10..120, row <- path_lines(with_columns(@moved, columns)) do
+        assert length(String.split(row, ~r/ {3,}/)) <= 2, "columns=#{columns}: #{inspect(row)}"
+      end
     end
   end
 
@@ -186,15 +262,15 @@ defmodule ExlineTest do
       assert lines == ["v2.0.0", @zwsp]
     end
 
-    test "falls back to the basename of cwd when git is unavailable" do
-      data = %{"workspace" => %{"current_dir" => @cwd}}
-      [_line1, line2 | _] = Exline.format(data, now: @now) |> String.split("\n")
+    test "describes the cwd, not the project dir" do
+      [_line1, _marker, line2 | _] =
+        Exline.format(at("/tmp", @cwd), now: @now) |> String.split("\n")
+
       assert line2 == "dotfiles"
     end
 
     test "falls back to the basename when the git cache returns nil (hung gather)" do
-      data = %{"workspace" => %{"current_dir" => @cwd}}
-      render = Exline.format(data, now: @now, git_fetch: fn _cwd -> nil end)
+      render = Exline.format(at(@cwd), now: @now, git_fetch: fn _cwd -> nil end)
       [_line1, line2 | _] = String.split(render, "\n")
       assert line2 == "dotfiles"
     end
@@ -202,8 +278,7 @@ defmodule ExlineTest do
 
   describe "merging the path and git lines (terminal.columns)" do
     test "joins them onto one row, git info flush right, when wide enough" do
-      data = %{"workspace" => %{"current_dir" => @cwd}, "terminal" => %{"columns" => 200}}
-      [merged | _] = Exline.format(data, now: @now) |> String.split("\n")
+      [merged | _] = Exline.format(at(@cwd) |> with_columns(200), now: @now) |> String.split("\n")
 
       assert String.starts_with?(merged, @cwd)
       # Flush right: ends exactly with the git group, no trailing pad.
@@ -215,15 +290,15 @@ defmodule ExlineTest do
     end
 
     test "keeps them stacked when the joined row would not fit" do
-      data = %{"workspace" => %{"current_dir" => @cwd}, "terminal" => %{"columns" => 33}}
-      [line1, line2 | _] = Exline.format(data, now: @now) |> String.split("\n")
+      [line1, line2 | _] =
+        Exline.format(at(@cwd) |> with_columns(33), now: @now) |> String.split("\n")
+
       assert line1 == @cwd
       assert line2 == "dotfiles"
     end
 
     test "stays stacked when the width is unknown" do
-      data = %{"workspace" => %{"current_dir" => @cwd}}
-      [line1, line2 | _] = Exline.format(data, now: @now) |> String.split("\n")
+      [line1, line2 | _] = Exline.format(at(@cwd), now: @now) |> String.split("\n")
       assert line1 == ".../exline-test-cwd/dotfiles"
       assert line2 == "dotfiles"
     end
@@ -438,14 +513,14 @@ defmodule ExlineTest do
     end
 
     test "ANSI is width-neutral: the flush-right merge stays aligned" do
-      data = %{"workspace" => %{"current_dir" => @cwd}, "terminal" => %{"columns" => 200}}
+      data = at(@cwd, @cwd <> "/sub/leaf") |> with_columns(200)
       [merged | _] = Exline.format(data, now: @now, color: true) |> String.split("\n")
 
-      assert merged =~ "\e["
+      assert merged =~ "\e[1mleaf\e[0m"
       visible = strip(merged)
       assert String.length(visible) == 196
-      assert String.starts_with?(visible, @cwd)
-      assert String.ends_with?(visible, "dotfiles")
+      assert String.starts_with?(visible, @cwd <> "  ↳ ./sub/leaf ")
+      assert String.ends_with?(visible, "leaf")
     end
   end
 

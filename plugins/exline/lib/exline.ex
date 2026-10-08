@@ -45,6 +45,8 @@ defmodule Exline do
       reports; adds a bold-yellow `ctx-report off` badge next to the `dev` one
       so the muting is never silent (default: `false`). The listener supplies it
       from `Exline.Sessions`.
+    * `:home` — home directory shown as `~` in the path row (default:
+      `System.user_home()`; tests inject).
 
   Each line is built as a `{plain, styled}` pair. Width, truncation, and merge
   decisions use the plain text only; the styled text is what's emitted. Because
@@ -56,10 +58,11 @@ defmodule Exline do
     dev? = Keyword.get(opts, :dev, false)
     ctx_report_off? = Keyword.get(opts, :ctx_report_off, false)
     git_fetch = Keyword.get(opts, :git_fetch, &Exline.GitCache.fetch/1)
+    home = Keyword.get_lazy(opts, :home, &System.user_home/0)
     width = terminal_columns(data)
 
     rows =
-      pair_row(line1(data, width, color?), line2(data, color?, git_fetch), width) ++
+      path_rows(data, width, color?, home, line2(data, color?, git_fetch)) ++
         pair_row(line3(data, color?, dev?, ctx_report_off?), line4(data, now, color?), width) ++
         drift_row(Keyword.get(opts, :drift), color?)
 
@@ -85,17 +88,21 @@ defmodule Exline do
   # placeholder → stacked. Operates on `{plain, styled}` pairs (or nil): the gap
   # is computed from the plain widths, the styled text is emitted.
   defp pair_row(left, right, width) do
+    case merge(left, right, width) do
+      nil -> [styled(left), styled(right)]
+      row -> [row]
+    end
+  end
+
+  # The merged styled row, or nil when the pair has to stay stacked.
+  defp merge(left, right, width) do
     lp = plain(left)
     rp = plain(right)
-    ls = styled(left)
-    rs = styled(right)
-    mergeable = not is_nil(rp) and rp != @zwsp
-    gap = is_integer(width) && lp && mergeable && width - String.length(lp) - String.length(rp)
+    mergeable = is_integer(width) and not is_nil(lp) and not is_nil(rp) and rp != @zwsp
 
-    cond do
-      is_nil(lp) or not mergeable -> [ls, rs]
-      gap && gap >= @min_gap -> [ls <> String.duplicate(" ", gap) <> rs]
-      true -> [ls, rs]
+    if mergeable do
+      gap = width - String.length(lp) - String.length(rp)
+      if gap >= @min_gap, do: styled(left) <> String.duplicate(" ", gap) <> styled(right)
     end
   end
 
@@ -122,12 +129,61 @@ defmodule Exline do
     end
   end
 
-  defp line1(data, width, color?) do
-    case get_in(data, ["workspace", "current_dir"]) do
-      nil -> nil
-      path -> path |> truncate_path(width) |> path_seg(color?)
+  # The path row: project dir on the left, a `↳` marker for the shell's cwd when
+  # a `cd` moved it away from the project, git info (for the cwd) on the right.
+  # Tries project + marker + git on one row, then project + git with the marker
+  # below, then all three stacked.
+  defp path_rows(data, width, color?, home, git) do
+    project = expand(get_in(data, ["workspace", "project_dir"]))
+    cwd = expand(get_in(data, ["workspace", "current_dir"]))
+    left = project && project |> tildify(home) |> truncate_path(width) |> path_seg(color?)
+    marker = cwd && cwd != project && cwd_marker(cwd, project, home, width, color?)
+
+    cond do
+      !marker -> pair_row(left, git, width)
+      row = merge(concat(left, marker, @field_sep), git, width) -> [row]
+      row = merge(left, git, width) -> [row, styled(marker)]
+      true -> [styled(left), styled(marker), styled(git)]
     end
   end
+
+  # Path.expand also drops trailing slashes, so equal dirs compare equal.
+  defp expand(nil), do: nil
+  defp expand(path), do: Path.expand(path)
+
+  defp tildify(path, home) do
+    cond do
+      is_nil(home) -> path
+      path == home -> "~"
+      String.starts_with?(path, home <> "/") -> "~" <> String.replace_prefix(path, home, "")
+      true -> path
+    end
+  end
+
+  # `↳ ./rel` inside the project, else the full (`~`-shortened) path. The glyph
+  # stays outside the truncated part so it always survives.
+  defp cwd_marker(cwd, project, home, width, color?) do
+    text = relative_to_project(cwd, project) || tildify(cwd, home)
+    path = text |> truncate_path(width && max(width - 2, 1)) |> path_seg(color?)
+    concat({"↳", "↳"}, path, " ")
+  end
+
+  # Compared by segment, so `/a/dotfiles2` is not inside `/a/dotfiles`.
+  defp relative_to_project(_cwd, nil), do: nil
+
+  defp relative_to_project(cwd, project) do
+    project_parts = Path.split(project)
+    cwd_parts = Path.split(cwd)
+
+    if List.starts_with?(cwd_parts, project_parts) do
+      "./" <> Path.join(Enum.drop(cwd_parts, length(project_parts)))
+    end
+  end
+
+  # Join two segments with `sep` (never three spaces: the client splits on the
+  # pad run). A nil left leaves the right alone, with no leading separator.
+  defp concat(nil, right, _sep), do: right
+  defp concat({lp, ls}, {rp, rs}, sep), do: {lp <> sep <> rp, ls <> sep <> rs}
 
   # Path styling: leave the parent segments + `.../` prefix at plain full
   # contrast, bold the leaf dir so the eye lands on where you are.
