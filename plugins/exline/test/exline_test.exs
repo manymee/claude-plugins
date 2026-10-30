@@ -86,6 +86,26 @@ defmodule ExlineTest do
     end
   end
 
+  describe "split mark" do
+    test "is absent by default" do
+      refute Exline.format(%{"version" => "2.0.0"}, now: @now) |> String.contains?("split")
+    end
+
+    test "sits after the badges on line 3" do
+      data = %{"version" => "2.0.0"}
+      out = Exline.format(data, now: @now, dev: true, split_chain: 2)
+
+      assert out
+             |> String.split("\n")
+             |> Enum.any?(&String.starts_with?(&1, "dev  split 2×  v2.0.0"))
+    end
+
+    test "renders bold when color is on" do
+      out = Exline.format(%{"version" => "2.0.0"}, now: @now, color: true, split_chain: 1)
+      assert String.contains?(out, "\e[1msplit 1×\e[0m")
+    end
+  end
+
   # Workspace payload whose shell has not moved: project and cwd are the same dir.
   defp at(dir), do: at(dir, dir)
   defp at(project, cwd), do: %{"workspace" => %{"project_dir" => project, "current_dir" => cwd}}

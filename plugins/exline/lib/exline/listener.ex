@@ -253,7 +253,8 @@ defmodule Exline.Listener do
       color: true,
       drift: Exline.PluginVersion.drift(),
       dev: config.dev?,
-      ctx_report_off: track_session(json, config)
+      ctx_report_off: track_session(json, config),
+      split_chain: Exline.SplitChain.count(json["session_id"])
     )
   catch
     kind, reason ->

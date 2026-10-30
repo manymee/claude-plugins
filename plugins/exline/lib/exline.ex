@@ -45,6 +45,10 @@ defmodule Exline do
       reports; adds a bold-yellow `ctx-report off` badge next to the `dev` one
       so the muting is never silent (default: `false`). The listener supplies it
       from `Exline.Sessions`.
+    * `:split_chain` — how many serial splits lead up to this session, or `nil`
+      when it did not come from one (default: `nil`). Renders a `split N×`
+      segment after the badges on line 3. The listener supplies it from
+      `Exline.SplitChain.count/1`.
     * `:home` — home directory shown as `~` in the path row (default:
       `System.user_home()`; tests inject).
 
@@ -57,13 +61,18 @@ defmodule Exline do
     color? = Keyword.get(opts, :color, false)
     dev? = Keyword.get(opts, :dev, false)
     ctx_report_off? = Keyword.get(opts, :ctx_report_off, false)
+    split_chain = Keyword.get(opts, :split_chain)
     git_fetch = Keyword.get(opts, :git_fetch, &Exline.GitCache.fetch/1)
     home = Keyword.get_lazy(opts, :home, &System.user_home/0)
     width = terminal_columns(data)
 
     rows =
       path_rows(data, width, color?, home, line2(data, color?, git_fetch)) ++
-        pair_row(line3(data, color?, dev?, ctx_report_off?), line4(data, now, color?), width) ++
+        pair_row(
+          line3(data, color?, dev?, ctx_report_off?, split_chain),
+          line4(data, now, color?),
+          width
+        ) ++
         drift_row(Keyword.get(opts, :drift), color?)
 
     rows
@@ -234,10 +243,11 @@ defmodule Exline do
     end
   end
 
-  defp line3(data, color?, dev?, ctx_report_off?) do
+  defp line3(data, color?, dev?, ctx_report_off?, split_chain) do
     [
       if(dev?, do: seg("dev", Style.behind(), color?)),
       if(ctx_report_off?, do: seg("ctx-report off", Style.behind(), color?)),
+      split_seg(split_chain, color?),
       seg(version(data), Style.bold(), color?),
       plain_seg(get_in(data, ["model", "display_name"])),
       seg(format_effort(get_in(data, ["effort", "level"])), Style.bold(), color?),
@@ -282,6 +292,12 @@ defmodule Exline do
          Enum.map_join(kept, styled_sep, &elem(&1, 1))}
     end
   end
+
+  # Informational, not a warning: bold like the version, not the badges' yellow.
+  defp split_seg(n, color?) when is_integer(n) and n > 0,
+    do: seg("split #{n}×", Style.bold(), color?)
+
+  defp split_seg(_n, _color?), do: nil
 
   defp version(data), do: data["version"] && "v#{data["version"]}"
 

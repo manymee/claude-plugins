@@ -11,7 +11,19 @@ v2.1.143  Opus 4.7  concise-omit  Ctx Used: 7.0%
 Session: 1.0%  3h15m  |  Weekly: 1.0%  134h45m
 ```
 
-Line 1: the session's project folder (`$HOME` shown as `~`). Claude Code's Bash tool keeps one shell per session, so a `cd` moves its working folder; when that folder differs from the project, a `↳` marker follows the project folder: `./sub/dir` inside the project, otherwise the full path. Long paths are shortened to `.../` plus their last folders; the marker moves to its own line when the row is too narrow. Line 2: git — repo, worktree, branch, dirty flags, ahead/behind — for the shell's folder, so after a `cd` it can show a different repo than the project. Line 3: Claude Code version, model, output style, context usage. Line 4: rate-limit windows with reset countdowns.
+Line 1: the session's project folder (`$HOME` shown as `~`). Claude Code's Bash tool keeps one shell per session, so a `cd` moves its working folder; when that folder differs from the project, a `↳` marker follows the project folder: `./sub/dir` inside the project, otherwise the full path. Long paths are shortened to `.../` plus their last folders; the marker moves to its own line when the row is too narrow. Line 2: git — repo, worktree, branch, dirty flags, ahead/behind — for the shell's folder, so after a `cd` it can show a different repo than the project. Line 3: Claude Code version, model, output style, context usage, led by `split N×` in a session started by a serial split (see [Split mark](#split-mark)). Line 4: rate-limit windows with reset countdowns.
+
+## Split mark
+
+A serial split (the `split.sh` of the split-serial skill) hands the work to a new
+session and closes the old one, appending one JSON line per split to
+`~/.claude/split-chain.jsonl` with the old session under `from.session` and
+the new one under `to.session`. When the rendering session appears as a
+`to.session`, line 3 shows `split N×` after any badges, where N counts the splits back
+along the chain: the record that started this session, the one that started
+its predecessor, and so on. No file, no record, or an unreadable file: no
+mark. Lines that don't parse are skipped. The parsed file is cached and re-read
+only when it changes, so a render costs one `stat`.
 
 ## Architecture
 
